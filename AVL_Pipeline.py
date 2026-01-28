@@ -1493,6 +1493,57 @@ def avl_trim_longitudinal(
 
 
 
+
+# --------------------------------------------
+# Some diagnostic helpers for Netwon Solver
+# --------------------------------------------
+
+
+
+def plot_newton_history(tr, title="Newton trim diagnostics"):
+    hist = tr["history"]["iter"]  # list of dicts, one per iteration
+
+    iters       = [h["iter"] for h in hist]
+    condJ       = [h.get("condJ", np.nan) for h in hist]
+    norm_f      = [h.get("norm_f", np.nan) for h in hist]
+    d_alpha_raw = [h.get("d_alpha_raw", np.nan) for h in hist]
+    d_elev_raw  = [h.get("d_elev_raw", np.nan) for h in hist]
+    d_alpha     = [h.get("d_alpha", np.nan) for h in hist]
+    d_elev      = [h.get("d_elev", np.nan) for h in hist]
+
+    fig, axs = plt.subplots(1, 3, figsize=(15, 4), constrained_layout=True)
+
+    # --- cond(J) ---
+    axs[0].plot(iters, condJ, marker="o")
+    axs[0].set_yscale("log")
+    axs[0].set_xlabel("Iteration")
+    axs[0].set_ylabel("cond(J)")
+    axs[0].set_title("Jacobian condition number")
+
+    # --- ||f|| ---
+    axs[1].plot(iters, norm_f, marker="o")
+    axs[1].set_yscale("log")
+    axs[1].set_xlabel("Iteration")
+    axs[1].set_ylabel(r"$\|f\| = \sqrt{f_1^2 + f_2^2}$")
+    axs[1].set_title("Residual norm")
+
+    # --- step sizes ---
+    axs[2].plot(iters, d_alpha_raw, "o--", label=r"$\Delta \alpha_{\rm raw}$")
+    axs[2].plot(iters, d_elev_raw,  "s--", label=r"$\Delta \delta_{e,\rm raw}$")
+    axs[2].plot(iters, d_alpha,     "o-",  label=r"$\Delta \alpha$ (clamped)")
+    axs[2].plot(iters, d_elev,      "s-",  label=r"$\Delta \delta_e$ (clamped)")
+    axs[2].set_xlabel("Iteration")
+    axs[2].set_ylabel("Step [deg]")
+    axs[2].set_title("Newton step sizes")
+    axs[2].legend()
+
+    title = title + "\n$f_1=CL-CL_\text{target}$, $f_2=Cm$"
+    fig.suptitle(title)
+    plt.show()
+
+
+
+
 def plot_trim_residual_surfaces(
     *,
     airplane: asb.Airplane,
