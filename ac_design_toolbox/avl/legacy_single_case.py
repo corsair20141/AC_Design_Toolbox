@@ -1,4 +1,9 @@
-# tools/avl_pipeline.py
+"""Preserved legacy AVL single-case workflow.
+
+This module keeps the older single-run AVL path available without making it part
+of the primary package surface. New integrations should prefer
+``ac_design_toolbox.api`` or the grouped modules under ``ac_design_toolbox.avl``.
+"""
 from __future__ import annotations
 import re
 import subprocess
@@ -6,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 import aerosandbox as asb
 
-from ADC_SAC_v4 import SAC  # provides density via SAC(alt, "si", temp_shift_F=...)["rho"]
+from ac_design_toolbox.atmosphere import SAC
 
 
 
@@ -331,4 +336,15 @@ def run_single_case(
     fs = parse_fs(working_directory / f"{case_name}.fs")
     st = parse_st(working_directory / f"{case_name}.stb")
     return {**fs, **st}
+
+
+__all__ = [
+    "build_single_runfile",
+    "map_controls_d_indices",
+    "parse_fs",
+    "parse_st",
+    "run_avl",
+    "run_single_case",
+    "write_avl_files_asb",
+]
 
