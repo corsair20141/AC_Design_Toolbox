@@ -1,0 +1,33 @@
+ ---------------------------------------------------------------
+ Vortex Lattice Output -- Total Forces
+
+ Configuration: AVL Mission Smoke Test                                      
+     # Surfaces =   4
+     # Strips   =  48
+     # Vortices = 576
+
+  Sref =  2.4000       Cref = 0.41834       Bref =  5.7966    
+  Xref =  0.0000       Yref =  0.0000       Zref =  0.0000    
+
+ Standard axis orientation,  X fwd, Z down         
+
+ Run case:  -unnamed-                              
+
+  Alpha =   4.00000     pb/2V =  -0.00000     p'b/2V =  -0.00000
+  Beta  =   0.00000     qc/2V =   0.00000
+  Mach  =     0.000     rb/2V =  -0.00000     r'b/2V =  -0.00000
+
+  CXtot =   0.02457     Cltot =   0.00000     Cl'tot =   0.00000
+  CYtot =  -0.00000     Cmtot =  -0.13808
+  CZtot =  -0.41264     Cntot =   0.00000     Cn'tot =   0.00000
+
+  CLtot =   0.41335
+  CDtot =   0.00427
+  CDvis =   0.00000     CDind = 0.0042698
+  CLff  =   0.41365     CDff  = 0.0036488    | Trefftz
+  CYff  =   0.00000         e =    1.0662    | Plane  
+
+   aileron         =   0.00000
+   elevator        =   0.00000
+
+ ---------------------------------------------------------------

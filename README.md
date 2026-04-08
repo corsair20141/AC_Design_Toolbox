@@ -9,6 +9,7 @@ The active package is organized so the public modules are also the modules that 
 - Conceptual sizing and takeoff estimation
 - Weight-fraction and first-pass sizing calculations
 - Range, endurance, and simple propulsion/performance equations
+- Mission-performance evaluation for prescribed air-relative operating points
 - Standard-atmosphere utilities
 - AeroSandbox aircraft geometry construction helpers
 - AVL geometry export, case execution, parsing, neutral-point analysis, and longitudinal trim
@@ -22,6 +23,8 @@ The new preferred import path is the `ac_design_toolbox` package:
 - `ac_design_toolbox.conceptual`
   - grouped conceptual-design equations
   - `takeoff.py`, `weights.py`, `range_endurance.py`, `performance.py`, `geometry_tools.py`, and `lifting_line.py` each contain the code implied by their names
+- `ac_design_toolbox.mission`
+  - mission-performance dataclasses and analytic operating-point evaluation
 - `ac_design_toolbox.geometry`
   - package-level geometry entry points
 - `ac_design_toolbox.geometry.aircraft`
@@ -79,6 +82,16 @@ For programmatic AVL workflows:
 from ac_design_toolbox.api import AVLCaseConfig, prepare_avl_airplane, run_case
 ```
 
+For air-relative mission-performance queries:
+
+```python
+from ac_design_toolbox.mission import (
+    AnalyticMissionPerformanceModel,
+    MissionAircraftPerformanceConfig,
+    MissionOperatingPoint,
+)
+```
+
 For lower-level AVL building blocks:
 
 ```python
@@ -96,13 +109,94 @@ from ac_design_toolbox.avl.parsing import parse_stability_file, parse_strip_forc
 
 The `ac_design_toolbox.api` module exists specifically to reduce the hidden coupling between geometry generation and `control_index_map` handling inside AVL runs, while still keeping the lower-level geometry and AVL modules available when more control is needed.
 
+## Mission Performance Interface
+
+The mission-performance interface is the preferred way for an external mission
+simulator to ask:
+
+- for this air-relative operating point, what bank, pitch, load factor, drag,
+  and propulsion power are implied?
+- does that operating point violate simple aircraft-performance limits?
+
+The interface is intentionally thin:
+
+- inputs are air-relative operating points only
+- wind models, ENU path propagation, and mission phase stepping remain external
+- the default path is analytic and does not require AVL
+
+The analytic model currently assumes:
+
+- atmospheric density comes from `standard_atmosphere(...)`
+- bank comes from `bank_deg_hint`, then turn radius, then coordinated straight
+  flight
+- pitch defaults to flight-path angle inferred from climb rate unless a pitch
+  hint is provided for reporting
+- drag follows a parabolic polar:
+  `CD = CD0 + CL^2 / (pi * AR * e)`
+- propulsion power follows drag plus climb-rate work divided by propulsive
+  efficiency
+
+An optional AVL-backed adapter is also available when AeroSandbox and AVL are
+installed:
+
+- `AVLMissionPerformanceModel` keeps the same air-relative operating-point
+  interface
+- bank angle and load factor still come from the prescribed mission state
+- AVL is used to solve quasi-steady longitudinal trim at the required `CL`
+- the current AVL path does not solve full banked-turn lateral trim, so turning
+  effects enter through the target load factor rather than separate rudder or
+  sideslip trim
+
+Example:
+
+```python
+from ac_design_toolbox.mission import (
+    AnalyticMissionPerformanceModel,
+    MissionAircraftPerformanceConfig,
+    MissionOperatingPoint,
+)
+
+config = MissionAircraftPerformanceConfig(
+    mass_kg=12.0,
+    wing_area_m2=2.4,
+    aspect_ratio=14.0,
+    oswald_efficiency=0.85,
+    zero_lift_drag_coefficient=0.03,
+    propulsive_efficiency=0.75,
+    max_lift_coefficient=1.3,
+    max_bank_deg=55.0,
+    max_load_factor=2.5,
+)
+model = AnalyticMissionPerformanceModel(config)
+result = model.evaluate(
+    MissionOperatingPoint(
+        phase_name="cruise",
+        altitude_m=800.0,
+        true_airspeed_m_s=24.0,
+        climb_rate_m_s=0.0,
+    )
+)
+```
+
+If you want AVL-backed aerodynamic coefficients with the same external
+interface:
+
+```python
+from ac_design_toolbox.mission import AVLMissionPerformanceModel
+```
+
+See [`examples/mission_performance_api.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/mission_performance_api.py)
+for a runnable example.
+
 ## Example
 
-See [`examples/refactored_toolbox_usage.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/refactored_toolbox_usage.py) for a simple end-to-end usage example.
+See [`examples/refactored_toolbox_usage.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/refactored_toolbox_usage.py) for a geometry/AVL example and [`examples/mission_performance_api.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/mission_performance_api.py) for the new analytic mission-performance API.
 
 ## External Dependencies And Limitations
 
 - Conceptual equations and atmosphere utilities use `numpy`, `scipy`, and `matplotlib`.
+- The mission-performance analytic path uses the package atmosphere helper plus a transparent parabolic drag model.
 - Geometry and AVL modules require `aerosandbox`.
 - AVL execution requires a working AVL executable, such as [`avl.exe`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/avl.exe).
+- Wind, ENU path propagation, and solar-power history are intentionally out of scope for `ac_design_toolbox`; those remain external mission-simulator responsibilities.
 - The toolbox remains research-oriented. It is intended for transparent first-pass analysis, not production-grade multidisciplinary optimization.

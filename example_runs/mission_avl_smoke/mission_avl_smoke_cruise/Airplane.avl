@@ -1,0 +1,181 @@
+AVL Mission Smoke Test
+#Mach
+0        ! AeroSandbox note: This is overwritten later to match the current OperatingPoint Mach during the AVL run.
+#IYsym   IZsym   Zsym
+0       0   0
+#Sref    Cref    Bref
+2.4 0.4183373217881678 5.796550698475776
+#Xref    Yref    Zref
+0.0 0.0 0.0
+# CDp
+0
+#===============================================================================
+SURFACE
+Main Wing
+#Nchordwise  Cspace  [Nspanwise   Sspace]
+12   1   12   1
+
+YDUPLICATE
+0
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+0 0 0 0.4871051 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af0
+
+CLAF
+1.0924506924962583  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+0 1.883879 0 0.39211961 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af1
+
+CLAF
+1.0924506924962583  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+aileron 1 0.75 0 1 0 -1
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+0 2.7533616 0 0.34828015 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af2
+
+CLAF
+1.0924506924962583  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+aileron 1 0.75 0 1 0 -1
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+aileron 1 0.75 0 1 0 -1
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+0 2.8982753 0 0.34097357 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af3
+
+CLAF
+1.0924506924962583  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+aileron 1 0.75 0 1 0 -1
+#===============================================================================
+SURFACE
+Horizontal Stabilizer
+#Nchordwise  Cspace  [Nspanwise   Sspace]
+12   1   12   1
+
+YDUPLICATE
+0
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+1.2 0 0 0.43209877 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af4
+
+CLAF
+1.0770184378795808  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+1.2 0.135 0 0.40617284 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af5
+
+CLAF
+1.0770184378795808  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+elevator 1 0.75 0 1 0 1
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+1.2 0.4275 0 0.35 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af6
+
+CLAF
+1.0770184378795808  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+elevator 1 0.75 0 1 0 1
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+elevator 1 0.75 0 1 0 1
+#--------------------------------------------------
+SECTION
+#Xle    Yle    Zle     Chord   Ainc  [Nspanwise   Sspace]
+1.2 0.45 0 0.34567901 0
+
+AFIL
+example_runs\mission_avl_smoke\mission_avl_smoke_cruise\Airplane.avl.af7
+
+CLAF
+1.0770184378795808  # Computed using rule from avl_doc.txt
+
+CDCL
+#CL1  CD1  CL2  CD2  CL3  CD3
+0 0 0 0 0 0
+
+CONTROL
+#name, gain, Xhinge, XYZhvec, SgnDup
+elevator 1 0.75 0 1 0 1
