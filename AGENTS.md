@@ -1,6 +1,6 @@
 \# AC\_Design\_Toolbox — Agent Instructions
 
-
+Python interpreter to use: C:\Users\corsa\mambaforge\envs\generic\python.exe
 
 This repository contains various codes and methods for aircraft conceptual design and performance analysis.
 
