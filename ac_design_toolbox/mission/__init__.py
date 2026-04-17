@@ -1,4 +1,4 @@
-"""Mission-performance interfaces for air-relative operating points."""
+"""Mission-performance interfaces for unit-aware air-relative operating points."""
 
 from ac_design_toolbox.mission.performance import (
     AnalyticMissionPerformanceModel,

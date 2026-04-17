@@ -31,8 +31,8 @@ class PackageApiTests(unittest.TestCase):
     def test_top_level_exports_include_mission_performance_objects(self) -> None:
         """Check the mission-performance objects exposed at the package root."""
         config = MissionAircraftPerformanceConfig(
-            mass_kg=5.0,
-            wing_area_m2=1.2,
+            mass=5.0,
+            wing_area=1.2,
             aspect_ratio=12.0,
             oswald_efficiency=0.82,
             zero_lift_drag_coefficient=0.03,
@@ -41,9 +41,9 @@ class PackageApiTests(unittest.TestCase):
         model = AnalyticMissionPerformanceModel(config)
         op = MissionOperatingPoint(
             phase_name="cruise",
-            altitude_m=0.0,
-            true_airspeed_m_s=20.0,
-            climb_rate_m_s=0.0,
+            altitude=0.0,
+            airspeed=20.0,
+            climb_rate=0.0,
         )
         result = model.evaluate(op)
 

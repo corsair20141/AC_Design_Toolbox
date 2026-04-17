@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from ac_design_toolbox.atmosphere import standard_atmosphere
 from ac_design_toolbox.conceptual.performance import CD_i_oswald
+from ac_design_toolbox.mission.units import QuantityInput, coerce_optional_quantity, coerce_quantity
 
 if TYPE_CHECKING:
     import aerosandbox as asb
@@ -31,6 +32,14 @@ def _require_finite_scalar(name: str, value: float) -> float:
     if not isfinite(scalar_value):
         raise ValueError(f"{name} must be finite.")
     return scalar_value
+
+
+def _require_optional_finite_scalar(name: str, value: float | None) -> float | None:
+    """Return an optional scalar float after checking that it is finite."""
+    if value is None:
+        return None
+
+    return _require_finite_scalar(name, value)
 
 
 def _clip_unit_interval(value: float) -> float:
@@ -55,6 +64,16 @@ class _ResolvedMissionState:
 class MissionOperatingPoint:
     """Air-relative operating conditions for one mission-performance query.
 
+    Dimensional public inputs accept either bare scalars in the stored
+    computational unit, ``(value, "unit")`` tuples, or ``[value, "unit"]``
+    lists. After normalization this dataclass stores:
+
+    - ``altitude`` in ``m``
+    - ``airspeed`` and ``climb_rate`` in ``m_s``
+    - ``turn_radius`` in ``m``
+    - ``bank_hint`` and ``pitch_hint`` in ``deg``
+    - ``temp_shift`` in ``degF``
+
     The operating point is intentionally minimal. It carries only the
     air-relative state needed to estimate first-pass aerodynamic and power
     quantities for a single instant. Mission path propagation, ENU kinematics,
@@ -62,43 +81,43 @@ class MissionOperatingPoint:
     """
 
     phase_name: str
-    altitude_m: float
-    true_airspeed_m_s: float
-    climb_rate_m_s: float
-    turn_radius_m: float | None = None
-    bank_deg_hint: float | None = None
-    pitch_deg_hint: float | None = None
+    altitude: QuantityInput
+    airspeed: QuantityInput
+    climb_rate: QuantityInput
+    turn_radius: QuantityInput | None = None
+    bank_hint: QuantityInput | None = None
+    pitch_hint: QuantityInput | None = None
     load_factor_hint: float | None = None
-    temp_shift_F: float = 0.0
+    temp_shift: QuantityInput = 0.0
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Validate scalar inputs and freeze metadata into an immutable mapping."""
+        """Normalize public inputs into the mission solver's computational units."""
         phase_name = str(self.phase_name).strip()
         if not phase_name:
             raise ValueError("phase_name must be a non-empty string.")
         object.__setattr__(self, "phase_name", phase_name)
 
-        airspeed = _require_finite_scalar("true_airspeed_m_s", self.true_airspeed_m_s)
+        altitude = coerce_quantity("altitude", self.altitude, "m", "length")
+        airspeed = coerce_quantity("airspeed", self.airspeed, "m_s", "speed")
+        climb_rate = coerce_quantity("climb_rate", self.climb_rate, "m_s", "rate")
+        temp_shift = coerce_quantity("temp_shift", self.temp_shift, "degF", "temperature_delta")
+
         if airspeed <= 0.0:
-            raise ValueError("true_airspeed_m_s must be positive.")
-        object.__setattr__(self, "true_airspeed_m_s", airspeed)
+            raise ValueError("airspeed must be positive.")
 
-        object.__setattr__(self, "altitude_m", _require_finite_scalar("altitude_m", self.altitude_m))
-        object.__setattr__(self, "climb_rate_m_s", _require_finite_scalar("climb_rate_m_s", self.climb_rate_m_s))
-        object.__setattr__(self, "temp_shift_F", _require_finite_scalar("temp_shift_F", self.temp_shift_F))
+        object.__setattr__(self, "altitude", altitude)
+        object.__setattr__(self, "airspeed", airspeed)
+        object.__setattr__(self, "climb_rate", climb_rate)
+        object.__setattr__(self, "temp_shift", temp_shift)
 
-        if self.turn_radius_m is not None:
-            turn_radius_m = _require_finite_scalar("turn_radius_m", self.turn_radius_m)
-            if turn_radius_m <= 0.0:
-                raise ValueError("turn_radius_m must be positive when provided.")
-            object.__setattr__(self, "turn_radius_m", turn_radius_m)
+        turn_radius = coerce_optional_quantity("turn_radius", self.turn_radius, "m", "length")
+        if turn_radius is not None and turn_radius <= 0.0:
+            raise ValueError("turn_radius must be positive when provided.")
+        object.__setattr__(self, "turn_radius", turn_radius)
 
-        if self.bank_deg_hint is not None:
-            object.__setattr__(self, "bank_deg_hint", _require_finite_scalar("bank_deg_hint", self.bank_deg_hint))
-
-        if self.pitch_deg_hint is not None:
-            object.__setattr__(self, "pitch_deg_hint", _require_finite_scalar("pitch_deg_hint", self.pitch_deg_hint))
+        object.__setattr__(self, "bank_hint", coerce_optional_quantity("bank_hint", self.bank_hint, "deg", "angle"))
+        object.__setattr__(self, "pitch_hint", coerce_optional_quantity("pitch_hint", self.pitch_hint, "deg", "angle"))
 
         if self.load_factor_hint is not None:
             object.__setattr__(
@@ -112,24 +131,81 @@ class MissionOperatingPoint:
 
 @dataclass(frozen=True)
 class MissionPerformancePoint:
-    """Resolved first-pass aircraft-performance state for one operating point."""
+    """Resolved first-pass aircraft-performance state for one operating point.
+
+    Dimensional constructor inputs accept either bare scalars in the stored
+    computational unit, ``(value, "unit")`` tuples, or ``[value, "unit"]``
+    lists. After normalization this dataclass stores:
+
+    - ``bank`` and ``pitch`` in ``deg``
+    - ``propulsion_power`` in ``w``
+    - ``drag_force`` in ``n``
+    - ``dynamic_pressure`` in ``pa``
+    - ``air_density`` in ``kg_m3``
+    """
 
     feasible: bool
-    bank_deg: float
-    pitch_deg: float
+    bank: QuantityInput
+    pitch: QuantityInput
     load_factor: float
-    propulsion_power_w: float
-    drag_force_n: float | None = None
+    propulsion_power: QuantityInput
+    drag_force: QuantityInput | None = None
     lift_coefficient: float | None = None
     drag_coefficient: float | None = None
-    dynamic_pressure_pa: float | None = None
-    air_density_kg_m3: float | None = None
+    dynamic_pressure: QuantityInput | None = None
+    air_density: QuantityInput | None = None
     notes: str = ""
+
+    def __post_init__(self) -> None:
+        """Normalize public result fields into the documented computational units."""
+        object.__setattr__(self, "feasible", bool(self.feasible))
+        object.__setattr__(self, "bank", coerce_quantity("bank", self.bank, "deg", "angle"))
+        object.__setattr__(self, "pitch", coerce_quantity("pitch", self.pitch, "deg", "angle"))
+        object.__setattr__(self, "load_factor", _require_finite_scalar("load_factor", self.load_factor))
+        object.__setattr__(
+            self,
+            "propulsion_power",
+            coerce_quantity("propulsion_power", self.propulsion_power, "w", "power"),
+        )
+        object.__setattr__(
+            self,
+            "drag_force",
+            coerce_optional_quantity("drag_force", self.drag_force, "n", "force"),
+        )
+        object.__setattr__(
+            self,
+            "dynamic_pressure",
+            coerce_optional_quantity("dynamic_pressure", self.dynamic_pressure, "pa", "pressure"),
+        )
+        object.__setattr__(
+            self,
+            "air_density",
+            coerce_optional_quantity("air_density", self.air_density, "kg_m3", "density"),
+        )
+        object.__setattr__(
+            self,
+            "lift_coefficient",
+            _require_optional_finite_scalar("lift_coefficient", self.lift_coefficient),
+        )
+        object.__setattr__(
+            self,
+            "drag_coefficient",
+            _require_optional_finite_scalar("drag_coefficient", self.drag_coefficient),
+        )
+        object.__setattr__(self, "notes", str(self.notes))
 
 
 @dataclass(frozen=True)
 class MissionAircraftPerformanceConfig:
     """Scalar aircraft-performance inputs for the mission analytic model.
+
+    Dimensional public inputs accept either bare scalars in the stored
+    computational unit, ``(value, "unit")`` tuples, or ``[value, "unit"]``
+    lists. After normalization this dataclass stores:
+
+    - ``mass`` in ``kg``
+    - ``wing_area`` in ``m2``
+    - ``max_bank`` in ``deg``
 
     The container is intentionally thin so external projects can depend on a
     stable interface without importing geometry-heavy workflows. It is meant for
@@ -137,20 +213,20 @@ class MissionAircraftPerformanceConfig:
     point rather than for full trim or high-fidelity aerodynamic prediction.
     """
 
-    mass_kg: float
-    wing_area_m2: float
+    mass: QuantityInput
+    wing_area: QuantityInput
     aspect_ratio: float
     oswald_efficiency: float
     zero_lift_drag_coefficient: float
     propulsive_efficiency: float
     max_lift_coefficient: float | None = None
-    max_bank_deg: float | None = None
+    max_bank: QuantityInput | None = None
     max_load_factor: float | None = None
 
     def __post_init__(self) -> None:
-        """Validate the scalar aircraft parameters used by the analytic model."""
-        mass_kg = _require_finite_scalar("mass_kg", self.mass_kg)
-        wing_area_m2 = _require_finite_scalar("wing_area_m2", self.wing_area_m2)
+        """Normalize public inputs into the analytic model's computational units."""
+        mass = coerce_quantity("mass", self.mass, "kg", "mass")
+        wing_area = coerce_quantity("wing_area", self.wing_area, "m2", "area")
         aspect_ratio = _require_finite_scalar("aspect_ratio", self.aspect_ratio)
         oswald_efficiency = _require_finite_scalar("oswald_efficiency", self.oswald_efficiency)
         zero_lift_drag_coefficient = _require_finite_scalar(
@@ -159,10 +235,10 @@ class MissionAircraftPerformanceConfig:
         )
         propulsive_efficiency = _require_finite_scalar("propulsive_efficiency", self.propulsive_efficiency)
 
-        if mass_kg <= 0.0:
-            raise ValueError("mass_kg must be positive.")
-        if wing_area_m2 <= 0.0:
-            raise ValueError("wing_area_m2 must be positive.")
+        if mass <= 0.0:
+            raise ValueError("mass must be positive.")
+        if wing_area <= 0.0:
+            raise ValueError("wing_area must be positive.")
         if aspect_ratio <= 0.0:
             raise ValueError("aspect_ratio must be positive.")
         if oswald_efficiency <= 0.0:
@@ -172,8 +248,8 @@ class MissionAircraftPerformanceConfig:
         if propulsive_efficiency <= 0.0 or propulsive_efficiency > 1.0:
             raise ValueError("propulsive_efficiency must lie in the interval (0, 1].")
 
-        object.__setattr__(self, "mass_kg", mass_kg)
-        object.__setattr__(self, "wing_area_m2", wing_area_m2)
+        object.__setattr__(self, "mass", mass)
+        object.__setattr__(self, "wing_area", wing_area)
         object.__setattr__(self, "aspect_ratio", aspect_ratio)
         object.__setattr__(self, "oswald_efficiency", oswald_efficiency)
         object.__setattr__(self, "zero_lift_drag_coefficient", zero_lift_drag_coefficient)
@@ -185,11 +261,11 @@ class MissionAircraftPerformanceConfig:
                 raise ValueError("max_lift_coefficient must be positive when provided.")
             object.__setattr__(self, "max_lift_coefficient", max_lift_coefficient)
 
-        if self.max_bank_deg is not None:
-            max_bank_deg = _require_finite_scalar("max_bank_deg", self.max_bank_deg)
-            if max_bank_deg <= 0.0 or max_bank_deg >= 90.0:
-                raise ValueError("max_bank_deg must lie in the interval (0, 90).")
-            object.__setattr__(self, "max_bank_deg", max_bank_deg)
+        max_bank = coerce_optional_quantity("max_bank", self.max_bank, "deg", "angle")
+        if max_bank is not None:
+            if max_bank <= 0.0 or max_bank >= 90.0:
+                raise ValueError("max_bank must lie in the interval (0, 90).")
+            object.__setattr__(self, "max_bank", max_bank)
 
         if self.max_load_factor is not None:
             max_load_factor = _require_finite_scalar("max_load_factor", self.max_load_factor)
@@ -202,19 +278,20 @@ class MissionAircraftPerformanceConfig:
         cls,
         airplane: "asb.Airplane | Any",
         *,
-        mass_kg: float,
+        mass: QuantityInput,
         oswald_efficiency: float,
         zero_lift_drag_coefficient: float,
         propulsive_efficiency: float,
         max_lift_coefficient: float | None = None,
-        max_bank_deg: float | None = None,
+        max_bank: QuantityInput | None = None,
         max_load_factor: float | None = None,
     ) -> "MissionAircraftPerformanceConfig":
         """Build a mission config from an AeroSandbox-style airplane object.
 
-        The helper extracts only the reference wing area and span needed for the
-        analytic model. It does not attempt to derive a higher-fidelity drag
-        polar or trim model from geometry alone.
+        The public ``mass`` and ``max_bank`` inputs accept bare scalars in
+        canonical units, ``(value, "unit")`` tuples, and ``[value, "unit"]``
+        lists. The extracted reference wing area and span from the airplane
+        object are assumed to already be in SI units from AeroSandbox.
         """
         try:
             wing_area_m2 = float(getattr(airplane, "s_ref"))
@@ -226,14 +303,14 @@ class MissionAircraftPerformanceConfig:
             raise ValueError("airplane reference area and span must be positive.")
 
         return cls(
-            mass_kg=mass_kg,
-            wing_area_m2=wing_area_m2,
+            mass=mass,
+            wing_area=wing_area_m2,
             aspect_ratio=span_m**2 / wing_area_m2,
             oswald_efficiency=oswald_efficiency,
             zero_lift_drag_coefficient=zero_lift_drag_coefficient,
             propulsive_efficiency=propulsive_efficiency,
             max_lift_coefficient=max_lift_coefficient,
-            max_bank_deg=max_bank_deg,
+            max_bank=max_bank,
             max_load_factor=max_load_factor,
         )
 
@@ -247,13 +324,13 @@ def _resolve_bank_angle_rad(
     """Infer the bank angle from hints, turn radius, or coordinated straight flight."""
     notes: list[str] = []
 
-    if op.bank_deg_hint is not None:
-        return radians(op.bank_deg_hint), notes
+    if op.bank_hint is not None:
+        return radians(op.bank_hint), notes
 
-    if op.turn_radius_m is not None:
-        horizontal_speed_sq = max(op.true_airspeed_m_s**2 - op.climb_rate_m_s**2, 0.0)
+    if op.turn_radius is not None:
+        horizontal_speed_sq = max(op.airspeed**2 - op.climb_rate**2, 0.0)
         gamma_cosine = max(cos(flight_path_angle_rad), COSINE_FLOOR)
-        return atan(horizontal_speed_sq / (gravity_m_s2 * op.turn_radius_m * gamma_cosine)), notes
+        return atan(horizontal_speed_sq / (gravity_m_s2 * op.turn_radius * gamma_cosine)), notes
 
     if op.load_factor_hint is not None:
         if op.load_factor_hint <= 0.0:
@@ -263,7 +340,7 @@ def _resolve_bank_angle_rad(
         cosine_argument = cos(flight_path_angle_rad) / op.load_factor_hint
         clipped_argument = _clip_unit_interval(cosine_argument)
         if abs(cosine_argument) > 1.0:
-            notes.append("load_factor_hint is inconsistent with coordinated flight at the requested climb rate.")
+            notes.append("load_factor_hint is inconsistent with coordinated flight at the requested climb_rate.")
         return copysign(acos(clipped_argument), 1.0), notes
 
     return 0.0, notes
@@ -292,18 +369,18 @@ def _resolve_operating_point_state(
     feasible = True
     notes: list[str] = []
 
-    climb_ratio = op.climb_rate_m_s / op.true_airspeed_m_s
+    climb_ratio = op.climb_rate / op.airspeed
     clipped_climb_ratio = _clip_unit_interval(climb_ratio)
     if abs(climb_ratio) > 1.0:
         feasible = False
-        notes.append("Requested climb rate magnitude exceeds true airspeed, so the flight-path angle was clipped.")
+        notes.append("Requested climb_rate magnitude exceeds airspeed, so the flight-path angle was clipped.")
 
     # The model uses climb rate to determine the flight-path angle because
     # pitch hints describe attitude reporting, not the energy rate.
     flight_path_angle_rad = asin(clipped_climb_ratio)
-    pitch_deg = float(op.pitch_deg_hint) if op.pitch_deg_hint is not None else degrees(flight_path_angle_rad)
-    if op.pitch_deg_hint is not None:
-        notes.append("Reported pitch uses pitch_deg_hint; force balance still follows climb_rate_m_s.")
+    pitch_deg = float(op.pitch_hint) if op.pitch_hint is not None else degrees(flight_path_angle_rad)
+    if op.pitch_hint is not None:
+        notes.append("Reported pitch uses pitch_hint; force balance still follows climb_rate.")
 
     bank_rad, bank_notes = _resolve_bank_angle_rad(
         op,
@@ -360,9 +437,9 @@ def _apply_feasibility_limits(
         feasible = False
         notes.append(f"Load factor {load_factor:.3f} exceeds n_max {aircraft.max_load_factor:.3f}.")
 
-    if aircraft.max_bank_deg is not None and abs(bank_deg) > aircraft.max_bank_deg:
+    if aircraft.max_bank is not None and abs(bank_deg) > aircraft.max_bank:
         feasible = False
-        notes.append(f"Bank angle {bank_deg:.3f} deg exceeds phi_max {aircraft.max_bank_deg:.3f} deg.")
+        notes.append(f"Bank angle {bank_deg:.3f} deg exceeds phi_max {aircraft.max_bank:.3f} deg.")
 
     return feasible
 
@@ -388,8 +465,9 @@ class AnalyticMissionPerformanceModel:
     - a propulsive-efficiency correction to convert useful power to propulsion
       system power
 
-    It is designed to be stable and easy to inspect rather than to replace AVL
-    trim or higher-fidelity aerodynamic analysis.
+    Public mission inputs are expected to arrive through the unit-aware mission
+    dataclasses and are already normalized to plain floats before the math here
+    runs.
     """
 
     aircraft: MissionAircraftPerformanceConfig
@@ -397,33 +475,31 @@ class AnalyticMissionPerformanceModel:
 
     def evaluate(self, op: MissionOperatingPoint) -> MissionPerformancePoint:
         """Evaluate one air-relative operating point with transparent approximations."""
-        atmosphere = standard_atmosphere(op.altitude_m, units="si", temp_shift_F=op.temp_shift_F)
+        atmosphere = standard_atmosphere(op.altitude, units="si", temp_shift_F=op.temp_shift)
         if isinstance(atmosphere, list):
             raise TypeError("Mission operating-point evaluation expects a scalar altitude.")
 
         air_density_kg_m3 = float(atmosphere["rho"])
-        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.true_airspeed_m_s**2
+        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.airspeed**2
 
         resolved_state = _resolve_operating_point_state(op, gravity_m_s2=self.gravity_m_s2)
         feasible = resolved_state.feasible
         notes = list(resolved_state.notes)
 
-        weight_newtons = self.aircraft.mass_kg * self.gravity_m_s2
+        weight_newtons = self.aircraft.mass * self.gravity_m_s2
         lift_force_n = weight_newtons * resolved_state.load_factor
-        lift_coefficient = lift_force_n / (dynamic_pressure_pa * self.aircraft.wing_area_m2)
+        lift_coefficient = lift_force_n / (dynamic_pressure_pa * self.aircraft.wing_area)
         drag_coefficient = self.aircraft.zero_lift_drag_coefficient + CD_i_oswald(
             CL=lift_coefficient,
             AR=self.aircraft.aspect_ratio,
             e=self.aircraft.oswald_efficiency,
         )
-        drag_force_n = dynamic_pressure_pa * self.aircraft.wing_area_m2 * drag_coefficient
+        drag_force_n = dynamic_pressure_pa * self.aircraft.wing_area * drag_coefficient
 
         useful_propulsive_force_n = drag_force_n + weight_newtons * sin(resolved_state.flight_path_angle_rad)
-        propulsion_power_w = useful_propulsive_force_n * op.true_airspeed_m_s / self.aircraft.propulsive_efficiency
+        propulsion_power_w = useful_propulsive_force_n * op.airspeed / self.aircraft.propulsive_efficiency
         if propulsion_power_w < 0.0:
-            notes.append(
-                "Negative propulsion_power_w means this first-pass model predicts no net propulsive input is required."
-            )
+            notes.append("Negative propulsion_power means this first-pass model predicts no net propulsive input.")
 
         feasible = _apply_feasibility_limits(
             self.aircraft,
@@ -436,15 +512,15 @@ class AnalyticMissionPerformanceModel:
 
         return MissionPerformancePoint(
             feasible=feasible,
-            bank_deg=resolved_state.bank_deg,
-            pitch_deg=resolved_state.pitch_deg,
+            bank=resolved_state.bank_deg,
+            pitch=resolved_state.pitch_deg,
             load_factor=resolved_state.load_factor,
-            propulsion_power_w=propulsion_power_w,
-            drag_force_n=drag_force_n,
+            propulsion_power=propulsion_power_w,
+            drag_force=drag_force_n,
             lift_coefficient=lift_coefficient,
             drag_coefficient=drag_coefficient,
-            dynamic_pressure_pa=dynamic_pressure_pa,
-            air_density_kg_m3=air_density_kg_m3,
+            dynamic_pressure=dynamic_pressure_pa,
+            air_density=air_density_kg_m3,
             notes=" ".join(notes).strip(),
         )
 

@@ -123,11 +123,51 @@ The interface is intentionally thin:
 - inputs are air-relative operating points only
 - wind models, ENU path propagation, and mission phase stepping remain external
 - the default path is analytic and does not require AVL
+- dimensional public inputs accept either bare scalars in canonical units,
+  `(value, "unit")` tuples, or `[value, "unit"]` lists
+
+Mission dataclasses normalize dimensional inputs immediately and then store
+plain floats in the computational units used by the solver:
+
+- `MissionOperatingPoint`
+  - `altitude` in `m`
+  - `airspeed` and `climb_rate` in `m_s`
+  - `turn_radius` in `m`
+  - `bank_hint` and `pitch_hint` in `deg`
+  - `temp_shift` in `degF`
+- `MissionAircraftPerformanceConfig`
+  - `mass` in `kg`
+  - `wing_area` in `m2`
+  - `max_bank` in `deg`
+- `MissionPerformancePoint`
+  - `bank` and `pitch` in `deg`
+  - `propulsion_power` in `w`
+  - `drag_force` in `n`
+  - `dynamic_pressure` in `pa`
+  - `air_density` in `kg_m3`
+
+The supported mission boundary units are intentionally small and explicit:
+
+- length: `m`, `ft`
+- speed/rate: `m_s`, `m/s`, `ft_s`, `ft/s`, `kts`, `kt`, `ft_min`, `ft/min`
+- area: `m2`, `ft2`, `sqft`
+- mass: `kg`, `lbm`, `lb`
+- force: `n`, `lbf`
+- power: `w`
+- angle: `deg`
+- time: `s`, `min`, `hr`
+- pressure: `pa`
+- density: `kg_m3`
+- temperature delta: `degF`, `degC`
+
+This is a clean-break public API change. The old suffix-based mission keyword
+arguments such as `true_airspeed_m_s`, `turn_radius_m`, `mass_kg`, and
+`max_bank_deg` are no longer accepted.
 
 The analytic model currently assumes:
 
 - atmospheric density comes from `standard_atmosphere(...)`
-- bank comes from `bank_deg_hint`, then turn radius, then coordinated straight
+- bank comes from `bank_hint`, then turn radius, then coordinated straight
   flight
 - pitch defaults to flight-path angle inferred from climb rate unless a pitch
   hint is provided for reporting
@@ -157,23 +197,24 @@ from ac_design_toolbox.mission import (
 )
 
 config = MissionAircraftPerformanceConfig(
-    mass_kg=12.0,
-    wing_area_m2=2.4,
+    mass=(26.455, "lbm"),
+    wing_area=[25.8334, "sqft"],
     aspect_ratio=14.0,
     oswald_efficiency=0.85,
     zero_lift_drag_coefficient=0.03,
     propulsive_efficiency=0.75,
     max_lift_coefficient=1.3,
-    max_bank_deg=55.0,
+    max_bank=(55.0, "deg"),
     max_load_factor=2.5,
 )
 model = AnalyticMissionPerformanceModel(config)
 result = model.evaluate(
     MissionOperatingPoint(
         phase_name="cruise",
-        altitude_m=800.0,
-        true_airspeed_m_s=24.0,
-        climb_rate_m_s=0.0,
+        altitude=[2624.67, "ft"],
+        airspeed=(24.0, "m/s"),
+        climb_rate=[0.0, "ft/min"],
+        temp_shift=(2.0, "degC"),
     )
 )
 ```

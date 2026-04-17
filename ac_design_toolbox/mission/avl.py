@@ -35,9 +35,13 @@ def _sanitize_case_name(text: str) -> str:
 class AVLMissionPerformanceModel:
     """Mission-performance adapter that gets aerodynamic coefficients from AVL.
 
-    The adapter preserves the same operating-point contract as the analytic
-    model. Bank angle, flight-path angle, and load factor are still inferred
-    from the prescribed air-relative operating point. AVL is then used only for
+    The adapter preserves the same unit-aware operating-point contract as the
+    analytic model. Public mission dataclasses normalize quantity inputs before
+    this adapter runs, so the AVL path still works on plain floats in the same
+    computational units used by the analytic solver.
+
+    Bank angle, flight-path angle, and load factor are still inferred from the
+    prescribed air-relative operating point. AVL is then used only for
     quasi-steady longitudinal trim at the resulting target lift coefficient.
 
     This keeps the interface thin and stable, but it also means the current
@@ -77,11 +81,11 @@ class AVLMissionPerformanceModel:
     def evaluate(self, op: MissionOperatingPoint) -> MissionPerformancePoint:
         """Evaluate one air-relative operating point with AVL-based trim coefficients."""
         resolved_state = _resolve_operating_point_state(op, gravity_m_s2=self.gravity_m_s2)
-        air_density_kg_m3 = isa_density(op.altitude_m, temp_shift_F=op.temp_shift_F)
-        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.true_airspeed_m_s**2
-        weight_newtons = self.aircraft.mass_kg * self.gravity_m_s2
+        air_density_kg_m3 = isa_density(op.altitude, temp_shift_F=op.temp_shift)
+        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.airspeed**2
+        weight_newtons = self.aircraft.mass * self.gravity_m_s2
         lift_target_newtons = weight_newtons * resolved_state.load_factor
-        lift_coefficient_target = lift_target_newtons / (dynamic_pressure_pa * self.aircraft.wing_area_m2)
+        lift_coefficient_target = lift_target_newtons / (dynamic_pressure_pa * self.aircraft.wing_area)
 
         case_name = self._build_case_name(op)
         control_index_map = self._ensure_case_setup(case_name)
@@ -93,9 +97,9 @@ class AVLMissionPerformanceModel:
                 working_directory=self.working_directory,
                 case_name=case_name,
                 CL_target=lift_coefficient_target,
-                velocity=op.true_airspeed_m_s,
-                altitude=op.altitude_m,
-                temp_shift_F=op.temp_shift_F,
+                velocity=op.airspeed,
+                altitude=op.altitude,
+                temp_shift_F=op.temp_shift,
                 mach=self.mach,
                 control_index_map=control_index_map,
                 baseline_controls=self.baseline_controls,
@@ -113,16 +117,16 @@ class AVLMissionPerformanceModel:
             raise RuntimeError(f"AVL mission-performance evaluation failed for phase '{op.phase_name}'.") from exc
 
         air_density_kg_m3 = float(trim_result.get("rho", air_density_kg_m3))
-        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.true_airspeed_m_s**2
+        dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.airspeed**2
         lift_coefficient = float(trim_result["CL"])
         drag_coefficient = float(trim_result["CD"])
-        drag_force_n = dynamic_pressure_pa * self.aircraft.wing_area_m2 * drag_coefficient
+        drag_force_n = dynamic_pressure_pa * self.aircraft.wing_area * drag_coefficient
         useful_propulsive_force_n = drag_force_n + weight_newtons * sin(resolved_state.flight_path_angle_rad)
-        propulsion_power_w = useful_propulsive_force_n * op.true_airspeed_m_s / self.aircraft.propulsive_efficiency
+        propulsion_power_w = useful_propulsive_force_n * op.airspeed / self.aircraft.propulsive_efficiency
 
         pitch_deg = resolved_state.pitch_deg
         notes = list(resolved_state.notes)
-        if op.pitch_deg_hint is None:
+        if op.pitch_hint is None:
             pitch_deg = degrees(resolved_state.flight_path_angle_rad) + float(trim_result["alpha_trim_deg"])
             notes.append("Returned pitch adds AVL trim alpha to the prescribed flight-path angle.")
 
@@ -143,7 +147,7 @@ class AVLMissionPerformanceModel:
         if abs(float(trim_result["Cm"])) > self.tol_Cm:
             notes.append(f"AVL trim residual Cm is {float(trim_result['Cm']):+.4f}.")
         if propulsion_power_w < 0.0:
-            notes.append("Negative propulsion_power_w means the climb-energy balance predicts no net propulsive input.")
+            notes.append("Negative propulsion_power means the climb-energy balance predicts no net propulsive input.")
 
         feasible = resolved_state.feasible
         if abs(lift_coefficient - lift_coefficient_target) > self.tol_CL or abs(float(trim_result["Cm"])) > self.tol_Cm:
@@ -160,15 +164,15 @@ class AVLMissionPerformanceModel:
 
         return MissionPerformancePoint(
             feasible=feasible,
-            bank_deg=resolved_state.bank_deg,
-            pitch_deg=pitch_deg,
+            bank=resolved_state.bank_deg,
+            pitch=pitch_deg,
             load_factor=resolved_state.load_factor,
-            propulsion_power_w=propulsion_power_w,
-            drag_force_n=drag_force_n,
+            propulsion_power=propulsion_power_w,
+            drag_force=drag_force_n,
             lift_coefficient=lift_coefficient,
             drag_coefficient=drag_coefficient,
-            dynamic_pressure_pa=dynamic_pressure_pa,
-            air_density_kg_m3=air_density_kg_m3,
+            dynamic_pressure=dynamic_pressure_pa,
+            air_density=air_density_kg_m3,
             notes=" ".join(notes).strip(),
         )
 

@@ -1,4 +1,4 @@
-"""Minimal example for the mission-performance interface.
+"""Minimal example for the unit-aware mission-performance interface.
 
 The default `main()` path stays analytic so the example runs without AVL.
 An optional helper below shows how to construct the AVL-backed adapter when
@@ -26,27 +26,31 @@ from ac_design_toolbox.mission import (
 def main() -> None:
     """Evaluate a single air-relative operating point with the analytic model."""
     config = MissionAircraftPerformanceConfig(
-        mass_kg=12.0,
-        wing_area_m2=2.4,
+        mass=(26.455, "lb"),
+        wing_area=[25.8334, "sqft"],
         aspect_ratio=14.0,
         oswald_efficiency=0.85,
         zero_lift_drag_coefficient=0.03,
         propulsive_efficiency=0.75,
         max_lift_coefficient=1.30,
-        max_bank_deg=55.0,
+        max_bank=(55.0, "deg"),
         max_load_factor=2.5,
     )
     model = AnalyticMissionPerformanceModel(config)
 
     operating_point = MissionOperatingPoint(
         phase_name="climb_turn",
-        altitude_m=1200.0,
-        true_airspeed_m_s=28.0,
-        climb_rate_m_s=3.5,
-        turn_radius_m=90.0,
+        altitude=[3937.01, "ft"],
+        airspeed=(54.4276, "kts"),
+        climb_rate=[700.0, "ft/min"],
+        turn_radius=(295.276, "ft"),
+        temp_shift=(2.0, "degC"),
         metadata={"source": "example"},
     )
 
+    print(f"Normalized altitude: {operating_point.altitude:.3f} m")
+    print(f"Normalized airspeed: {operating_point.airspeed:.3f} m/s")
+    print(f"Normalized climb rate: {operating_point.climb_rate:.3f} m/s")
     result = model.evaluate(operating_point)
     print(result)
 
@@ -77,12 +81,12 @@ def build_optional_avl_model() -> Any | None:
     )
     config = MissionAircraftPerformanceConfig.from_airplane(
         airplane,
-        mass_kg=12.0,
+        mass=(26.455, "lbm"),
         oswald_efficiency=0.85,
         zero_lift_drag_coefficient=0.03,
         propulsive_efficiency=0.75,
         max_lift_coefficient=1.30,
-        max_bank_deg=55.0,
+        max_bank=(55.0, "deg"),
         max_load_factor=2.5,
     )
 
