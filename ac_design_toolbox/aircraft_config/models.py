@@ -17,7 +17,7 @@ from ac_design_toolbox.mission.units import QuantityInput, coerce_quantity
 
 
 SCHEMA_VERSION = "acdt_aircraft_definition_v1"
-TAIL_TYPES = ("conventional", "t_tail", "v_tail")
+TAIL_TYPES = ("conventional", "t_tail", "v_tail", "h_tail", "y_tail")
 
 
 def _coerce_required_string(name: str, value: Any) -> str:
@@ -105,14 +105,14 @@ class MainWingConfig:
     """
 
     component_id: str = "main_wing"
-    span: QuantityInput = 18.0
-    area: QuantityInput = 2.6
+    span: QuantityInput = 1.8288
+    area: QuantityInput = 0.41806368
     taper: float = 0.65
-    sweep_le_deg: QuantityInput = 5.0
-    dihedral_deg: QuantityInput = 3.0
-    x_le: QuantityInput = 0.0
+    sweep_le_deg: QuantityInput = 0.0
+    dihedral_deg: QuantityInput = 7.0
+    x_le: QuantityInput = 0.2286
     y_le: QuantityInput = 0.0
-    z_le: QuantityInput = 0.0
+    z_le: QuantityInput = 0.03048
     twist_root_deg: QuantityInput = 0.0
     twist_tip_deg: QuantityInput = 0.0
     root_airfoil: str = "naca4412"
@@ -180,14 +180,14 @@ class MainWingConfig:
         """Build the configuration from a plain dictionary."""
         return cls(
             component_id=data.get("component_id", "main_wing"),
-            span=data.get("span", 18.0),
-            area=data.get("area", 2.6),
+            span=data.get("span", 1.8288),
+            area=data.get("area", 0.41806368),
             taper=data.get("taper", 0.65),
-            sweep_le_deg=data.get("sweep_le_deg", 5.0),
-            dihedral_deg=data.get("dihedral_deg", 3.0),
-            x_le=data.get("x_le", 0.0),
+            sweep_le_deg=data.get("sweep_le_deg", 0.0),
+            dihedral_deg=data.get("dihedral_deg", 7.0),
+            x_le=data.get("x_le", 0.2286),
             y_le=data.get("y_le", 0.0),
-            z_le=data.get("z_le", 0.0),
+            z_le=data.get("z_le", 0.03048),
             twist_root_deg=data.get("twist_root_deg", 0.0),
             twist_tip_deg=data.get("twist_tip_deg", 0.0),
             root_airfoil=data.get("root_airfoil", "naca4412"),
@@ -312,8 +312,8 @@ class FuselageConfig:
     """
 
     enabled: bool = True
-    length: QuantityInput = 3.4
-    max_radius: QuantityInput = 0.12
+    length: QuantityInput = 1.0668
+    max_radius: QuantityInput = 0.05334
     n_sections: int = 21
     x_nose: QuantityInput = 0.0
     y_nose: QuantityInput = 0.0
@@ -358,8 +358,8 @@ class FuselageConfig:
         """Build the configuration from a plain dictionary."""
         return cls(
             enabled=data.get("enabled", True),
-            length=data.get("length", 3.4),
-            max_radius=data.get("max_radius", 0.12),
+            length=data.get("length", 1.0668),
+            max_radius=data.get("max_radius", 0.05334),
             n_sections=data.get("n_sections", 21),
             x_nose=data.get("x_nose", 0.0),
             y_nose=data.get("y_nose", 0.0),
@@ -438,25 +438,25 @@ class TailAssemblyConfig:
     horizontal_tail: TailSurfaceConfig = field(
         default_factory=lambda: TailSurfaceConfig(
             component_id="horizontal_tail",
-            span=4.6,
-            area=0.72,
+            span=0.6858,
+            area=0.123950337843,
             taper=0.8,
             sweep_le_deg=10.0,
             dihedral_deg=0.0,
-            x_le=2.55,
+            x_le=0.8382,
             y_le=0.0,
-            z_le=0.05,
+            z_le=0.0,
         )
     )
     vertical_tail: TailSurfaceConfig = field(
         default_factory=lambda: TailSurfaceConfig(
             component_id="vertical_tail",
-            span=1.25,
-            area=0.34,
+            span=0.3048,
+            area=0.06020771943,
             taper=0.7,
             sweep_le_deg=25.0,
             dihedral_deg=0.0,
-            x_le=2.45,
+            x_le=0.8382,
             y_le=0.0,
             z_le=0.0,
         )
@@ -495,6 +495,18 @@ class TailAssemblyConfig:
             return [
                 self.horizontal_tail.component_id,
                 self.vertical_tail.component_id,
+            ]
+        if self.tail_type == "h_tail":
+            return [
+                self.horizontal_tail.component_id,
+                f"{self.vertical_tail.component_id}_right",
+                f"{self.vertical_tail.component_id}_left",
+            ]
+        if self.tail_type == "y_tail":
+            return [
+                self.vertical_tail.component_id,
+                f"{self.v_tail_surface.component_id}_right",
+                f"{self.v_tail_surface.component_id}_left",
             ]
         base_id = self.v_tail_surface.component_id
         return [f"{base_id}_right", f"{base_id}_left"]

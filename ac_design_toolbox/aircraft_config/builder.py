@@ -25,10 +25,26 @@ def _mirror_wing_about_xz(wing: asb.Wing, *, name: str) -> asb.Wing:
     mirrored = deepcopy(wing)
     mirrored.name = name
     for xsec in mirrored.xsecs:
-        xyz = list(xsec.xyz_le)
-        xyz[1] = -float(xyz[1])
-        xsec.xyz_le = xyz
+        xsec.xyz_le = np.array(
+            [
+                float(xsec.xyz_le[0]),
+                -float(xsec.xyz_le[1]),
+                float(xsec.xyz_le[2]),
+            ]
+        )
     return mirrored
+
+
+def _wing_tip_leading_edge_xyz(wing: asb.Wing) -> tuple[float, float, float]:
+    """Return the right-tip leading-edge coordinates for a built wing."""
+    if not getattr(wing, "xsecs", None):
+        raise ValueError("Wing must contain at least one cross section.")
+    tip_xsec = wing.xsecs[-1]
+    return (
+        float(tip_xsec.xyz_le[0]),
+        float(tip_xsec.xyz_le[1]),
+        float(tip_xsec.xyz_le[2]),
+    )
 
 
 def _build_main_wing(definition: AircraftDefinition) -> asb.Wing:
@@ -99,6 +115,7 @@ def _build_vertical_tail(surface: TailSurfaceConfig) -> asb.Wing:
         area=surface.area,
         taper=surface.taper,
         sweep_le=surface.sweep_le_deg,
+        cant=surface.dihedral_deg,
         twist=(surface.twist_root_deg, surface.twist_tip_deg),
         airfoil_root=_as_airfoil(surface.root_airfoil),
         airfoil_tip=_as_airfoil(surface.tip_airfoil),
@@ -141,8 +158,20 @@ def _t_tail_horizontal_surface(definition: AircraftDefinition) -> TailSurfaceCon
 def _build_v_tail_surfaces(definition: AircraftDefinition) -> list[asb.Wing]:
     """Build mirrored V-tail surfaces with stable right/left component IDs."""
     surface = definition.tail_assembly.v_tail_surface
-    right_id = f"{surface.component_id}_right"
-    left_id = f"{surface.component_id}_left"
+    return _build_canted_tail_pair(
+        surface,
+        right_id=f"{surface.component_id}_right",
+        left_id=f"{surface.component_id}_left",
+    )
+
+
+def _build_canted_tail_pair(
+    surface: TailSurfaceConfig,
+    *,
+    right_id: str,
+    left_id: str,
+) -> list[asb.Wing]:
+    """Build a mirrored canted-tail pair from one canonical surface definition."""
     right_surface = make_wing(
         name=right_id,
         span=2.0 * surface.span,
@@ -168,6 +197,51 @@ def _build_v_tail_surfaces(definition: AircraftDefinition) -> list[asb.Wing]:
     return [right_surface, left_surface]
 
 
+def _build_h_tail_surfaces(definition: AircraftDefinition) -> list[asb.Wing]:
+    """Build an H-tail using the HT plus twin vertical fins at the HT tips."""
+    horizontal_tail = _build_horizontal_tail(definition.tail_assembly.horizontal_tail)
+    tip_x, tip_y, tip_z = _wing_tip_leading_edge_xyz(horizontal_tail)
+    vertical_tail = definition.tail_assembly.vertical_tail
+    right_surface = make_vt(
+        name=f"{vertical_tail.component_id}_right",
+        span=vertical_tail.span,
+        n_sections_vt=vertical_tail.n_sections,
+        n_chordwise_vt=vertical_tail.n_chordwise,
+        chordwise_spacing_vt=vertical_tail.chordwise_spacing,
+        n_spanwise_vt=vertical_tail.n_spanwise,
+        spanwise_spacing_vt=vertical_tail.spanwise_spacing,
+        x_le=tip_x,
+        y_le=tip_y,
+        z_le=tip_z,
+        area=vertical_tail.area,
+        taper=vertical_tail.taper,
+        sweep_le=vertical_tail.sweep_le_deg,
+        cant=vertical_tail.dihedral_deg,
+        twist=(vertical_tail.twist_root_deg, vertical_tail.twist_tip_deg),
+        airfoil_root=_as_airfoil(vertical_tail.root_airfoil),
+        airfoil_tip=_as_airfoil(vertical_tail.tip_airfoil),
+        span_frac_rudder=None,
+        delta_rudder=0.0,
+    )
+    right_surface.name = f"{vertical_tail.component_id}_right"
+    left_surface = _mirror_wing_about_xz(right_surface, name=f"{vertical_tail.component_id}_left")
+    return [horizontal_tail, right_surface, left_surface]
+
+
+def _build_y_tail_surfaces(definition: AircraftDefinition) -> list[asb.Wing]:
+    """Build a Y-tail using one center fin plus a mirrored canted pair."""
+    tail_assembly = definition.tail_assembly
+    wings: list[asb.Wing] = [_build_vertical_tail(tail_assembly.vertical_tail)]
+    wings.extend(
+        _build_canted_tail_pair(
+            tail_assembly.v_tail_surface,
+            right_id=f"{tail_assembly.v_tail_surface.component_id}_right",
+            left_id=f"{tail_assembly.v_tail_surface.component_id}_left",
+        )
+    )
+    return wings
+
+
 def build_aircraft(definition: AircraftDefinition) -> asb.Airplane:
     """Build an AeroSandbox airplane from the canonical aircraft definition.
 
@@ -185,6 +259,10 @@ def build_aircraft(definition: AircraftDefinition) -> asb.Airplane:
         wings.append(_build_horizontal_tail(_t_tail_horizontal_surface(definition)))
     elif tail_assembly.tail_type == "v_tail":
         wings.extend(_build_v_tail_surfaces(definition))
+    elif tail_assembly.tail_type == "h_tail":
+        wings.extend(_build_h_tail_surfaces(definition))
+    elif tail_assembly.tail_type == "y_tail":
+        wings.extend(_build_y_tail_surfaces(definition))
     else:
         raise ValueError(f"Unsupported tail_type {tail_assembly.tail_type!r}.")
 

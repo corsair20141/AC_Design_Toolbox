@@ -153,6 +153,18 @@ The tail assembly currently supports:
 - `conventional`
 - `t_tail`
 - `v_tail`
+- `h_tail`
+- `y_tail`
+
+The aircraft-config package also exposes public first-pass sizing helpers for
+external tools that need to stay aligned with the canonical geometry math:
+
+- `solve_planform(...)`
+- `planform_quarter_chord_x(...)`
+- `solve_horizontal_tail_area_from_volume_coefficient(...)`
+- `solve_vertical_tail_area_from_volume_coefficient(...)`
+- mirrored canted-tail and twin-fin area helpers for projected-equivalent
+  volume sizing
 
 That interface is intentionally shared across repos. `Solar_UAS` owns only its
 own extension namespace, currently `extensions["solar_uas"]`, while ACDT owns

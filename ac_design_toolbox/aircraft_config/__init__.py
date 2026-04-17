@@ -11,6 +11,18 @@ from ac_design_toolbox.aircraft_config.models import (
     TailAssemblyConfig,
     TailSurfaceConfig,
 )
+from ac_design_toolbox.aircraft_config.sizing import (
+    PlanformSizingResult,
+    canted_pair_projected_area_factor,
+    mean_aerodynamic_chord_spanwise_station,
+    planform_quarter_chord_x,
+    solve_canted_pair_surface_area_from_horizontal_volume_coefficient,
+    solve_canted_pair_surface_area_from_vertical_volume_coefficient,
+    solve_horizontal_tail_area_from_volume_coefficient,
+    solve_planform,
+    solve_twin_vertical_tail_surface_area_from_volume_coefficient,
+    solve_vertical_tail_area_from_volume_coefficient,
+)
 from ac_design_toolbox.aircraft_config.variables import (
     collect_component_ids,
     design_variable_records,
@@ -22,14 +34,24 @@ __all__ = [
     "DesignVariableSpec",
     "FuselageConfig",
     "MainWingConfig",
+    "PlanformSizingResult",
     "ReferenceGeometryConfig",
     "SCHEMA_VERSION",
     "TAIL_TYPES",
     "TailAssemblyConfig",
     "TailSurfaceConfig",
+    "canted_pair_projected_area_factor",
     "collect_component_ids",
     "design_variable_records",
+    "mean_aerodynamic_chord_spanwise_station",
+    "planform_quarter_chord_x",
     "resolve_path_value",
+    "solve_canted_pair_surface_area_from_horizontal_volume_coefficient",
+    "solve_canted_pair_surface_area_from_vertical_volume_coefficient",
+    "solve_horizontal_tail_area_from_volume_coefficient",
+    "solve_planform",
+    "solve_twin_vertical_tail_surface_area_from_volume_coefficient",
+    "solve_vertical_tail_area_from_volume_coefficient",
 ]
 
 try:
