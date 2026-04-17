@@ -10,6 +10,7 @@ The active package is organized so the public modules are also the modules that 
 - Weight-fraction and first-pass sizing calculations
 - Range, endurance, and simple propulsion/performance equations
 - Mission-performance evaluation for prescribed air-relative operating points
+- Canonical aircraft-definition schemas with JSON import/export and rendering helpers
 - Standard-atmosphere utilities
 - AeroSandbox aircraft geometry construction helpers
 - AVL geometry export, case execution, parsing, neutral-point analysis, and longitudinal trim
@@ -25,6 +26,8 @@ The new preferred import path is the `ac_design_toolbox` package:
   - `takeoff.py`, `weights.py`, `range_endurance.py`, `performance.py`, `geometry_tools.py`, and `lifting_line.py` each contain the code implied by their names
 - `ac_design_toolbox.mission`
   - mission-performance dataclasses and analytic operating-point evaluation
+- `ac_design_toolbox.aircraft_config`
+  - canonical aircraft definitions, JSON helpers, geometry assembly, optimizer-variable metadata, and rendering helpers
 - `ac_design_toolbox.geometry`
   - package-level geometry entry points
 - `ac_design_toolbox.geometry.aircraft`
@@ -76,6 +79,16 @@ For geometry generation:
 from ac_design_toolbox.geometry.aircraft import simple_aircraft
 ```
 
+For canonical aircraft-definition workflows:
+
+```python
+from ac_design_toolbox.aircraft_config import (
+    AircraftDefinition,
+    build_aircraft,
+    render_aircraft_plotly,
+)
+```
+
 For programmatic AVL workflows:
 
 ```python
@@ -108,6 +121,61 @@ from ac_design_toolbox.avl.parsing import parse_stability_file, parse_strip_forc
 4. Use `avl_neutral_point_and_SM(...)` or `avl_trim_longitudinal(...)` for stability and trim studies.
 
 The `ac_design_toolbox.api` module exists specifically to reduce the hidden coupling between geometry generation and `control_index_map` handling inside AVL runs, while still keeping the lower-level geometry and AVL modules available when more control is needed.
+
+## Aircraft Configuration Interface
+
+The aircraft-configuration interface is the preferred way to define an aircraft
+when the object needs to be:
+
+- saved and reloaded as JSON
+- edited through an external GUI such as the `Solar_UAS` configurator
+- compared across multiple candidate designs
+- tagged with optimizer-facing variable metadata
+
+The public interface is centered on:
+
+- `AircraftDefinition`
+- `TailAssemblyConfig`
+- `DesignVariableSpec`
+- `build_aircraft(...)`
+- `render_aircraft_plotly(...)`
+- `render_aircraft_three_view_image(...)`
+
+`AircraftDefinition` is versioned and JSON-round-trippable. It stores:
+
+- canonical geometry for the reference point, main wing, tail assembly, and simple fuselage
+- stable component IDs for buildable lifting surfaces
+- optimizer-facing variable metadata through `design_variables`
+- extension data under `extensions`
+
+The tail assembly currently supports:
+
+- `conventional`
+- `t_tail`
+- `v_tail`
+
+That interface is intentionally shared across repos. `Solar_UAS` owns only its
+own extension namespace, currently `extensions["solar_uas"]`, while ACDT owns
+the canonical aircraft-definition schema itself.
+
+Example:
+
+```python
+from ac_design_toolbox.aircraft_config import (
+    AircraftDefinition,
+    build_aircraft,
+    render_aircraft_three_view_image,
+)
+
+definition = AircraftDefinition.from_dict(
+    {
+        "name": "Reference Solar UAV",
+        "tail_assembly": {"tail_type": "t_tail"},
+    }
+)
+airplane = build_aircraft(definition)
+three_view_png = render_aircraft_three_view_image(definition)
+```
 
 ## Mission Performance Interface
 
@@ -237,7 +305,8 @@ See [`examples/refactored_toolbox_usage.py`](/C:/Users/corsa/OneDrive%20-%20The%
 
 - Conceptual equations and atmosphere utilities use `numpy`, `scipy`, and `matplotlib`.
 - The mission-performance analytic path uses the package atmosphere helper plus a transparent parabolic drag model.
-- Geometry and AVL modules require `aerosandbox`.
+- The aircraft-config builder and geometry/AVL modules require `aerosandbox`.
+- The aircraft-config rendering helpers use `plotly` plus Matplotlib image export for three-view payloads.
 - AVL execution requires a working AVL executable, such as [`avl.exe`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/avl.exe).
 - Wind, ENU path propagation, and solar-power history are intentionally out of scope for `ac_design_toolbox`; those remain external mission-simulator responsibilities.
 - The toolbox remains research-oriented. It is intended for transparent first-pass analysis, not production-grade multidisciplinary optimization.

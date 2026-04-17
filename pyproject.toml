@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ac_design_toolbox"
+version = "0.1.0"
+description = "Research-oriented aircraft analysis and configuration toolbox"
+requires-python = ">=3.11"
+dependencies = [
+    "aerosandbox",
+    "matplotlib>=3.8",
+    "numpy>=1.24",
+    "plotly>=6.0.0",
+    "scipy>=1.11",
+]
+
+[tool.setuptools.packages.find]
+include = ["ac_design_toolbox*"]
