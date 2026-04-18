@@ -172,6 +172,10 @@ def _build_canted_tail_pair(
     left_id: str,
 ) -> list[asb.Wing]:
     """Build a mirrored canted-tail pair from one canonical surface definition."""
+    # `make_wing()` uses the same full-span convention for both symmetric and
+    # asymmetric wings. Each canted tail surface is a single asymmetric panel,
+    # so preserve the intended one-surface projected span and area by doubling
+    # both values on the constructor call.
     right_surface = make_wing(
         name=right_id,
         span=2.0 * surface.span,
@@ -181,7 +185,7 @@ def _build_canted_tail_pair(
         n_spanwise_w=surface.n_spanwise,
         spanwise_spacing_w=surface.spanwise_spacing,
         symmetric=False,
-        area=surface.area,
+        area=2.0 * surface.area,
         taper=surface.taper,
         sweep_le=surface.sweep_le_deg,
         dihedral=surface.dihedral_deg,

@@ -105,6 +105,37 @@ class AircraftConfigTests(unittest.TestCase):
         right_surface = next(wing for wing in airplane.wings if wing.name == "v_tail_surface_right")
         self.assertLess(float(right_surface.xsecs[-1].xyz_le[2]), float(right_surface.xsecs[0].xyz_le[2]))
 
+    def test_v_tail_builder_preserves_single_surface_planform_metrics(self) -> None:
+        """Each built canted-tail surface should honor the stored one-surface span and area."""
+        definition = AircraftDefinition.from_dict(
+            {
+                "tail_assembly": {
+                    "tail_type": "v_tail",
+                    "v_tail_surface": {
+                        "component_id": "v_tail_surface",
+                        "span": 2.1,
+                        "area": 0.28,
+                        "taper": 0.8,
+                        "sweep_le_deg": 18.0,
+                        "dihedral_deg": 35.0,
+                        "x_le": 2.5,
+                        "y_le": 0.0,
+                        "z_le": 0.0,
+                    },
+                }
+            }
+        )
+        airplane = build_aircraft(definition)
+        right_surface = next(wing for wing in airplane.wings if wing.name == "v_tail_surface_right")
+        expected_planform = solve_planform(span=2.1, area=0.28, taper=0.8)
+
+        self.assertAlmostEqual(
+            float(right_surface.xsecs[-1].xyz_le[1] - right_surface.xsecs[0].xyz_le[1]),
+            2.1,
+        )
+        self.assertAlmostEqual(float(right_surface.xsecs[0].chord), expected_planform.root_chord)
+        self.assertAlmostEqual(float(right_surface.xsecs[-1].chord), expected_planform.tip_chord)
+
     def test_solve_planform_supports_all_public_driver_sets(self) -> None:
         """Each supported public driver set should converge to the same planform."""
         expected = dict(
