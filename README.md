@@ -135,7 +135,7 @@ when the object needs to be:
 The public interface is centered on:
 
 - `AircraftDefinition`
-- `TailAssemblyConfig`
+- `LiftingSurfaceConfig`
 - `DesignVariableSpec`
 - `build_aircraft(...)`
 - `render_aircraft_plotly(...)`
@@ -143,18 +143,30 @@ The public interface is centered on:
 
 `AircraftDefinition` is versioned and JSON-round-trippable. It stores:
 
-- canonical geometry for the reference point, main wing, tail assembly, and simple fuselage
-- stable component IDs for buildable lifting surfaces
+- canonical geometry for the reference point, explicit `lifting_surfaces`, and a simple fuselage
+- stable component IDs for buildable lifting surfaces, including mirrored right/left IDs for symmetric vertical surfaces
 - optimizer-facing variable metadata through `design_variables`
 - extension data under `extensions`
 
-The tail assembly currently supports:
+The canonical aircraft schema is now a hard-break explicit surface-list model:
 
-- `conventional`
-- `t_tail`
-- `v_tail`
-- `h_tail`
-- `y_tail`
+- `AircraftDefinition.main_wing` and `AircraftDefinition.tail_assembly` were removed from the canonical JSON shape.
+- All wing-like geometry lives in `AircraftDefinition.lifting_surfaces: list[LiftingSurfaceConfig]`.
+- `LiftingSurfaceConfig.role` records the design intent for each surface:
+  - `main_wing`
+  - `wing`
+  - `horizontal_tail`
+  - `vertical_tail`
+  - `canted_tail`
+  - `canard`
+  - `other`
+- `LiftingSurfaceConfig.orientation` is either `horizontal` or `vertical`.
+- Exactly one `role="main_wing"` surface is required.
+- Tail surfaces are optional, so tailless aircraft are valid.
+- Symmetry is explicit metadata:
+  - symmetric horizontal surfaces build as mirrored AeroSandbox wings
+  - symmetric vertical surfaces build as right/left mirrored component pairs
+  - non-symmetric surfaces are literal one-side components
 
 The aircraft-config package also exposes public first-pass sizing helpers for
 external tools that need to stay aligned with the canonical geometry math:
@@ -175,18 +187,34 @@ Example:
 ```python
 from ac_design_toolbox.aircraft_config import (
     AircraftDefinition,
+    LiftingSurfaceConfig,
     build_aircraft,
     render_aircraft_three_view_image,
 )
 
-definition = AircraftDefinition.from_dict(
-    {
-        "name": "Reference Solar UAV",
-        "tail_assembly": {"tail_type": "t_tail"},
-    }
+definition = AircraftDefinition(
+    name="Tailless Testbed",
+    lifting_surfaces=[
+        LiftingSurfaceConfig(
+            component_id="main_wing",
+            role="main_wing",
+            orientation="horizontal",
+            symmetric=True,
+            span=6.0,
+            area=2.4,
+            taper=0.6,
+            sweep_le_deg=4.0,
+            dihedral_deg=6.0,
+            x_le=0.3,
+            y_le=0.0,
+            z_le=0.05,
+            root_airfoil="naca4412",
+            tip_airfoil="naca4412",
+        )
+    ],
 )
 airplane = build_aircraft(definition)
-three_view_png = render_aircraft_three_view_image(definition)
+three_view_png = render_aircraft_three_view_image(definition, unit_system="imperial")
 ```
 
 ## Mission Performance Interface

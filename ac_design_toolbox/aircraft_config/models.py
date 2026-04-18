@@ -1,9 +1,10 @@
 """Canonical aircraft-definition models for installable cross-project use.
 
-This module defines a typed, JSON-round-trippable aircraft configuration
-schema. The schema is intentionally explicit and first-pass: it focuses on
-geometry, stable component identifiers, and optimizer-facing metadata rather
-than trying to represent every possible aircraft design feature up front.
+This module defines the canonical JSON-round-trippable aircraft configuration
+schema used by both AC_Design_Toolbox and Solar_UAS. The current schema is a
+hard-break surface-list model: all wing-like geometry lives in
+``AircraftDefinition.lifting_surfaces`` and family-specific tail wrappers are
+intentionally out of scope.
 """
 
 from __future__ import annotations
@@ -16,8 +17,18 @@ from typing import Any
 from ac_design_toolbox.mission.units import QuantityInput, coerce_quantity
 
 
-SCHEMA_VERSION = "acdt_aircraft_definition_v1"
-TAIL_TYPES = ("conventional", "t_tail", "v_tail", "h_tail", "y_tail")
+SCHEMA_VERSION = "acdt_aircraft_definition_v2"
+SURFACE_ROLES = (
+    "main_wing",
+    "wing",
+    "horizontal_tail",
+    "vertical_tail",
+    "canted_tail",
+    "canard",
+    "other",
+)
+SURFACE_ORIENTATIONS = ("horizontal", "vertical")
+_LEGACY_SCHEMA_KEYS = ("main_wing", "tail_assembly")
 
 
 def _coerce_required_string(name: str, value: Any) -> str:
@@ -31,16 +42,6 @@ def _coerce_required_string(name: str, value: Any) -> str:
 def _coerce_optional_string(value: Any) -> str:
     """Return a plain string for optional descriptive fields."""
     return "" if value is None else str(value)
-
-
-def _coerce_fraction(name: str, value: Any) -> float:
-    """Return a finite scalar fraction in the closed interval [0, 1]."""
-    scalar_value = float(value)
-    if not isfinite(scalar_value):
-        raise ValueError(f"{name} must be finite.")
-    if scalar_value < 0.0 or scalar_value > 1.0:
-        raise ValueError(f"{name} must lie in [0, 1].")
-    return scalar_value
 
 
 def _coerce_positive_float(name: str, value: Any) -> float:
@@ -97,14 +98,26 @@ class ReferenceGeometryConfig:
 
 
 @dataclass
-class MainWingConfig:
-    """Main-wing geometry definition used by the canonical aircraft schema.
+class LiftingSurfaceConfig:
+    """Canonical lifting-surface geometry definition.
+
+    The schema intentionally uses one shared surface model for main wings, extra
+    wings, canards, and tail-like surfaces. A few conventions matter:
+
+    - Horizontal symmetric surfaces use the traditional wing convention where
+      ``span`` and ``area`` describe the full mirrored surface.
+    - Vertical symmetric surfaces represent one literal surface definition that
+      will be mirrored into right/left built components.
+    - Non-symmetric surfaces always represent one literal, unmirrored surface.
 
     Bare scalar dimensional inputs are stored as meters, square meters, and
     degrees after normalization.
     """
 
     component_id: str = "main_wing"
+    role: str = "main_wing"
+    orientation: str = "horizontal"
+    symmetric: bool = True
     span: QuantityInput = 1.8288
     area: QuantityInput = 0.41806368
     taper: float = 0.65
@@ -124,8 +137,19 @@ class MainWingConfig:
     spanwise_spacing: str = "cosine"
 
     def __post_init__(self) -> None:
-        """Normalize the wing geometry into canonical computational units."""
+        """Normalize the surface geometry into canonical computational units."""
         self.component_id = _coerce_required_string("component_id", self.component_id)
+        self.role = _coerce_required_string("role", self.role)
+        if self.role not in SURFACE_ROLES:
+            raise ValueError(f"role must be one of {SURFACE_ROLES}, got {self.role!r}.")
+
+        self.orientation = _coerce_required_string("orientation", self.orientation)
+        if self.orientation not in SURFACE_ORIENTATIONS:
+            raise ValueError(
+                f"orientation must be one of {SURFACE_ORIENTATIONS}, got {self.orientation!r}."
+            )
+
+        self.symmetric = bool(self.symmetric)
         self.span = coerce_quantity("span", self.span, "m", "length")
         self.area = coerce_quantity("area", self.area, "m2", "area")
         self.taper = _coerce_positive_float("taper", self.taper)
@@ -141,6 +165,7 @@ class MainWingConfig:
         self.n_sections = int(self.n_sections)
         self.n_chordwise = int(self.n_chordwise)
         self.n_spanwise = int(self.n_spanwise)
+
         if self.span <= 0.0:
             raise ValueError("span must be positive.")
         if self.area <= 0.0:
@@ -152,10 +177,24 @@ class MainWingConfig:
         if self.n_spanwise < 1:
             raise ValueError("n_spanwise must be >= 1.")
 
+        if self.role in {"main_wing", "horizontal_tail", "canard"} and self.orientation != "horizontal":
+            raise ValueError(f"{self.role} surfaces must use horizontal orientation.")
+        if self.role in {"vertical_tail", "canted_tail"} and self.orientation != "vertical":
+            raise ValueError(f"{self.role} surfaces must use vertical orientation.")
+
+    def built_component_ids(self) -> list[str]:
+        """Return the stable component IDs emitted by the geometry builder."""
+        if self.orientation == "vertical" and self.symmetric:
+            return [f"{self.component_id}_right", f"{self.component_id}_left"]
+        return [self.component_id]
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the configuration to a plain dictionary."""
         return {
             "component_id": self.component_id,
+            "role": self.role,
+            "orientation": self.orientation,
+            "symmetric": self.symmetric,
             "span": self.span,
             "area": self.area,
             "taper": self.taper,
@@ -176,118 +215,17 @@ class MainWingConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MainWingConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "LiftingSurfaceConfig":
         """Build the configuration from a plain dictionary."""
         return cls(
-            component_id=data.get("component_id", "main_wing"),
-            span=data.get("span", 1.8288),
-            area=data.get("area", 0.41806368),
-            taper=data.get("taper", 0.65),
-            sweep_le_deg=data.get("sweep_le_deg", 0.0),
-            dihedral_deg=data.get("dihedral_deg", 7.0),
-            x_le=data.get("x_le", 0.2286),
-            y_le=data.get("y_le", 0.0),
-            z_le=data.get("z_le", 0.03048),
-            twist_root_deg=data.get("twist_root_deg", 0.0),
-            twist_tip_deg=data.get("twist_tip_deg", 0.0),
-            root_airfoil=data.get("root_airfoil", "naca4412"),
-            tip_airfoil=data.get("tip_airfoil", "naca4412"),
-            n_sections=data.get("n_sections", 3),
-            n_chordwise=data.get("n_chordwise", 12),
-            n_spanwise=data.get("n_spanwise", 36),
-            chordwise_spacing=data.get("chordwise_spacing", "cosine"),
-            spanwise_spacing=data.get("spanwise_spacing", "cosine"),
-        )
-
-
-@dataclass
-class TailSurfaceConfig:
-    """Tail-surface geometry definition for horizontal, vertical, or V-tail use.
-
-    Bare scalar dimensional inputs are stored as meters, square meters, and
-    degrees after normalization.
-    """
-
-    component_id: str
-    span: QuantityInput
-    area: QuantityInput
-    taper: float = 0.8
-    sweep_le_deg: QuantityInput = 20.0
-    dihedral_deg: QuantityInput = 0.0
-    x_le: QuantityInput = 0.0
-    y_le: QuantityInput = 0.0
-    z_le: QuantityInput = 0.0
-    twist_root_deg: QuantityInput = 0.0
-    twist_tip_deg: QuantityInput = 0.0
-    root_airfoil: str = "naca0010"
-    tip_airfoil: str = "naca0010"
-    n_sections: int = 3
-    n_chordwise: int = 8
-    n_spanwise: int = 21
-    chordwise_spacing: str = "cosine"
-    spanwise_spacing: str = "cosine"
-
-    def __post_init__(self) -> None:
-        """Normalize the tail-surface definition into canonical units."""
-        self.component_id = _coerce_required_string("component_id", self.component_id)
-        self.span = coerce_quantity("span", self.span, "m", "length")
-        self.area = coerce_quantity("area", self.area, "m2", "area")
-        self.taper = _coerce_positive_float("taper", self.taper)
-        self.sweep_le_deg = coerce_quantity("sweep_le_deg", self.sweep_le_deg, "deg", "angle")
-        self.dihedral_deg = coerce_quantity("dihedral_deg", self.dihedral_deg, "deg", "angle")
-        self.x_le = coerce_quantity("x_le", self.x_le, "m", "length")
-        self.y_le = coerce_quantity("y_le", self.y_le, "m", "length")
-        self.z_le = coerce_quantity("z_le", self.z_le, "m", "length")
-        self.twist_root_deg = coerce_quantity("twist_root_deg", self.twist_root_deg, "deg", "angle")
-        self.twist_tip_deg = coerce_quantity("twist_tip_deg", self.twist_tip_deg, "deg", "angle")
-        self.root_airfoil = _coerce_required_string("root_airfoil", self.root_airfoil)
-        self.tip_airfoil = _coerce_required_string("tip_airfoil", self.tip_airfoil)
-        self.n_sections = int(self.n_sections)
-        self.n_chordwise = int(self.n_chordwise)
-        self.n_spanwise = int(self.n_spanwise)
-        if self.span <= 0.0:
-            raise ValueError("span must be positive.")
-        if self.area <= 0.0:
-            raise ValueError("area must be positive.")
-        if self.n_sections < 2:
-            raise ValueError("n_sections must be >= 2.")
-        if self.n_chordwise < 1:
-            raise ValueError("n_chordwise must be >= 1.")
-        if self.n_spanwise < 1:
-            raise ValueError("n_spanwise must be >= 1.")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the configuration to a plain dictionary."""
-        return {
-            "component_id": self.component_id,
-            "span": self.span,
-            "area": self.area,
-            "taper": self.taper,
-            "sweep_le_deg": self.sweep_le_deg,
-            "dihedral_deg": self.dihedral_deg,
-            "x_le": self.x_le,
-            "y_le": self.y_le,
-            "z_le": self.z_le,
-            "twist_root_deg": self.twist_root_deg,
-            "twist_tip_deg": self.twist_tip_deg,
-            "root_airfoil": self.root_airfoil,
-            "tip_airfoil": self.tip_airfoil,
-            "n_sections": self.n_sections,
-            "n_chordwise": self.n_chordwise,
-            "n_spanwise": self.n_spanwise,
-            "chordwise_spacing": self.chordwise_spacing,
-            "spanwise_spacing": self.spanwise_spacing,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TailSurfaceConfig":
-        """Build the configuration from a plain dictionary."""
-        return cls(
-            component_id=data["component_id"],
-            span=data["span"],
-            area=data["area"],
+            component_id=data.get("component_id", "lifting_surface"),
+            role=data.get("role", "other"),
+            orientation=data.get("orientation", "horizontal"),
+            symmetric=data.get("symmetric", True),
+            span=data.get("span", 1.0),
+            area=data.get("area", 0.1),
             taper=data.get("taper", 0.8),
-            sweep_le_deg=data.get("sweep_le_deg", 20.0),
+            sweep_le_deg=data.get("sweep_le_deg", 0.0),
             dihedral_deg=data.get("dihedral_deg", 0.0),
             x_le=data.get("x_le", 0.0),
             y_le=data.get("y_le", 0.0),
@@ -302,6 +240,86 @@ class TailSurfaceConfig:
             chordwise_spacing=data.get("chordwise_spacing", "cosine"),
             spanwise_spacing=data.get("spanwise_spacing", "cosine"),
         )
+
+
+def default_main_wing_surface() -> LiftingSurfaceConfig:
+    """Return the default main-wing surface used by the reference definition."""
+    return LiftingSurfaceConfig(
+        component_id="main_wing",
+        role="main_wing",
+        orientation="horizontal",
+        symmetric=True,
+        span=1.8288,
+        area=0.41806368,
+        taper=0.65,
+        sweep_le_deg=0.0,
+        dihedral_deg=7.0,
+        x_le=0.2286,
+        y_le=0.0,
+        z_le=0.03048,
+        twist_root_deg=0.0,
+        twist_tip_deg=0.0,
+        root_airfoil="naca4412",
+        tip_airfoil="naca4412",
+        n_sections=3,
+        n_chordwise=12,
+        n_spanwise=36,
+    )
+
+
+def default_horizontal_tail_surface() -> LiftingSurfaceConfig:
+    """Return the default horizontal-tail surface used by the reference definition."""
+    return LiftingSurfaceConfig(
+        component_id="horizontal_tail",
+        role="horizontal_tail",
+        orientation="horizontal",
+        symmetric=True,
+        span=0.6858,
+        area=0.123950337843,
+        taper=0.8,
+        sweep_le_deg=10.0,
+        dihedral_deg=0.0,
+        x_le=0.8382,
+        y_le=0.0,
+        z_le=0.0,
+        root_airfoil="naca0010",
+        tip_airfoil="naca0010",
+        n_sections=3,
+        n_chordwise=8,
+        n_spanwise=21,
+    )
+
+
+def default_vertical_tail_surface() -> LiftingSurfaceConfig:
+    """Return the default centerline vertical-tail surface used by the reference definition."""
+    return LiftingSurfaceConfig(
+        component_id="vertical_tail",
+        role="vertical_tail",
+        orientation="vertical",
+        symmetric=False,
+        span=0.3048,
+        area=0.06020771943,
+        taper=0.7,
+        sweep_le_deg=25.0,
+        dihedral_deg=0.0,
+        x_le=0.8382,
+        y_le=0.0,
+        z_le=0.0,
+        root_airfoil="naca0010",
+        tip_airfoil="naca0010",
+        n_sections=3,
+        n_chordwise=8,
+        n_spanwise=21,
+    )
+
+
+def default_lifting_surfaces() -> list[LiftingSurfaceConfig]:
+    """Return the default conventional lifting-surface set for a reference aircraft."""
+    return [
+        default_main_wing_surface(),
+        default_horizontal_tail_surface(),
+        default_vertical_tail_surface(),
+    ]
 
 
 @dataclass
@@ -371,7 +389,7 @@ class FuselageConfig:
 
 @dataclass
 class DesignVariableSpec:
-    """Optimizer-facing metadata for a scalar design variable path."""
+    """Optimizer-facing metadata for a scalar design-variable path."""
 
     path: str
     label: str
@@ -431,116 +449,6 @@ class DesignVariableSpec:
 
 
 @dataclass
-class TailAssemblyConfig:
-    """Tail-family selection and associated tail-geometry definitions."""
-
-    tail_type: str = "conventional"
-    horizontal_tail: TailSurfaceConfig = field(
-        default_factory=lambda: TailSurfaceConfig(
-            component_id="horizontal_tail",
-            span=0.6858,
-            area=0.123950337843,
-            taper=0.8,
-            sweep_le_deg=10.0,
-            dihedral_deg=0.0,
-            x_le=0.8382,
-            y_le=0.0,
-            z_le=0.0,
-        )
-    )
-    vertical_tail: TailSurfaceConfig = field(
-        default_factory=lambda: TailSurfaceConfig(
-            component_id="vertical_tail",
-            span=0.3048,
-            area=0.06020771943,
-            taper=0.7,
-            sweep_le_deg=25.0,
-            dihedral_deg=0.0,
-            x_le=0.8382,
-            y_le=0.0,
-            z_le=0.0,
-        )
-    )
-    v_tail_surface: TailSurfaceConfig = field(
-        default_factory=lambda: TailSurfaceConfig(
-            component_id="v_tail_surface",
-            span=2.1,
-            area=0.28,
-            taper=0.8,
-            sweep_le_deg=18.0,
-            dihedral_deg=45.0,
-            x_le=2.5,
-            y_le=0.0,
-            z_le=0.0,
-        )
-    )
-    t_tail_mount_fraction: float = 1.0
-
-    def __post_init__(self) -> None:
-        """Validate the selected tail family and nested geometry."""
-        self.tail_type = _coerce_required_string("tail_type", self.tail_type)
-        if self.tail_type not in TAIL_TYPES:
-            raise ValueError(f"tail_type must be one of {TAIL_TYPES}, got {self.tail_type!r}.")
-        if isinstance(self.horizontal_tail, dict):
-            self.horizontal_tail = TailSurfaceConfig.from_dict(self.horizontal_tail)
-        if isinstance(self.vertical_tail, dict):
-            self.vertical_tail = TailSurfaceConfig.from_dict(self.vertical_tail)
-        if isinstance(self.v_tail_surface, dict):
-            self.v_tail_surface = TailSurfaceConfig.from_dict(self.v_tail_surface)
-        self.t_tail_mount_fraction = _coerce_fraction("t_tail_mount_fraction", self.t_tail_mount_fraction)
-
-    def active_component_ids(self) -> list[str]:
-        """Return the stable component identifiers implied by the tail family."""
-        if self.tail_type in {"conventional", "t_tail"}:
-            return [
-                self.horizontal_tail.component_id,
-                self.vertical_tail.component_id,
-            ]
-        if self.tail_type == "h_tail":
-            return [
-                self.horizontal_tail.component_id,
-                f"{self.vertical_tail.component_id}_right",
-                f"{self.vertical_tail.component_id}_left",
-            ]
-        if self.tail_type == "y_tail":
-            return [
-                self.vertical_tail.component_id,
-                f"{self.v_tail_surface.component_id}_right",
-                f"{self.v_tail_surface.component_id}_left",
-            ]
-        base_id = self.v_tail_surface.component_id
-        return [f"{base_id}_right", f"{base_id}_left"]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the tail assembly to a plain dictionary."""
-        return {
-            "tail_type": self.tail_type,
-            "horizontal_tail": self.horizontal_tail.to_dict(),
-            "vertical_tail": self.vertical_tail.to_dict(),
-            "v_tail_surface": self.v_tail_surface.to_dict(),
-            "t_tail_mount_fraction": self.t_tail_mount_fraction,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TailAssemblyConfig":
-        """Build the tail assembly from a plain dictionary."""
-        default_tail = cls()
-        return cls(
-            tail_type=data.get("tail_type", "conventional"),
-            horizontal_tail=TailSurfaceConfig.from_dict(
-                data.get("horizontal_tail", default_tail.horizontal_tail.to_dict())
-            ),
-            vertical_tail=TailSurfaceConfig.from_dict(
-                data.get("vertical_tail", default_tail.vertical_tail.to_dict())
-            ),
-            v_tail_surface=TailSurfaceConfig.from_dict(
-                data.get("v_tail_surface", default_tail.v_tail_surface.to_dict())
-            ),
-            t_tail_mount_fraction=data.get("t_tail_mount_fraction", 1.0),
-        )
-
-
-@dataclass
 class AircraftDefinition:
     """Canonical aircraft definition shared across ACDT and Solar_UAS."""
 
@@ -551,33 +459,24 @@ class AircraftDefinition:
         "downstream solar-layout work."
     )
     reference_geometry: ReferenceGeometryConfig = field(default_factory=ReferenceGeometryConfig)
-    main_wing: MainWingConfig = field(default_factory=MainWingConfig)
-    tail_assembly: TailAssemblyConfig = field(default_factory=TailAssemblyConfig)
+    lifting_surfaces: list[LiftingSurfaceConfig] = field(default_factory=default_lifting_surfaces)
     fuselage: FuselageConfig = field(default_factory=FuselageConfig)
     design_variables: list[DesignVariableSpec] = field(
         default_factory=lambda: [
             DesignVariableSpec(
-                path="main_wing.span",
-                label="Wing Span",
+                path="lifting_surfaces[main_wing].span",
+                label="Main Wing Span",
                 lower=14.0,
                 upper=24.0,
                 step=0.1,
                 unit="m",
             ),
             DesignVariableSpec(
-                path="main_wing.area",
-                label="Wing Area",
+                path="lifting_surfaces[main_wing].area",
+                label="Main Wing Area",
                 lower=1.8,
                 upper=4.5,
                 step=0.05,
-                unit="m2",
-            ),
-            DesignVariableSpec(
-                path="tail_assembly.horizontal_tail.area",
-                label="Horizontal Tail Area",
-                lower=0.4,
-                upper=1.2,
-                step=0.02,
                 unit="m2",
             ),
         ]
@@ -585,16 +484,31 @@ class AircraftDefinition:
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Coerce nested dictionaries into typed dataclasses and validate JSON state."""
+        """Coerce nested dictionaries into typed dataclasses and validate state."""
         self.schema_version = _coerce_required_string("schema_version", self.schema_version)
         self.name = _coerce_required_string("name", self.name)
         self.description = _coerce_optional_string(self.description)
+
         if isinstance(self.reference_geometry, dict):
             self.reference_geometry = ReferenceGeometryConfig.from_dict(self.reference_geometry)
-        if isinstance(self.main_wing, dict):
-            self.main_wing = MainWingConfig.from_dict(self.main_wing)
-        if isinstance(self.tail_assembly, dict):
-            self.tail_assembly = TailAssemblyConfig.from_dict(self.tail_assembly)
+        self.lifting_surfaces = [
+            surface if isinstance(surface, LiftingSurfaceConfig) else LiftingSurfaceConfig.from_dict(surface)
+            for surface in self.lifting_surfaces
+        ]
+        if not self.lifting_surfaces:
+            raise ValueError("lifting_surfaces must contain at least one surface.")
+
+        component_ids = [surface.component_id for surface in self.lifting_surfaces]
+        duplicate_component_ids = sorted({surface_id for surface_id in component_ids if component_ids.count(surface_id) > 1})
+        if duplicate_component_ids:
+            raise ValueError(f"lifting_surfaces component_id values must be unique. Duplicates: {duplicate_component_ids}")
+
+        main_wings = [surface for surface in self.lifting_surfaces if surface.role == "main_wing"]
+        if len(main_wings) != 1:
+            raise ValueError(
+                "lifting_surfaces must contain exactly one role='main_wing' surface."
+            )
+
         if isinstance(self.fuselage, dict):
             self.fuselage = FuselageConfig.from_dict(self.fuselage)
         self.design_variables = [
@@ -603,10 +517,26 @@ class AircraftDefinition:
         ]
         self.extensions = _json_safe_copy("extensions", self.extensions)
 
+    def surface_by_component_id(self, component_id: str) -> LiftingSurfaceConfig:
+        """Return the canonical surface with the requested component ID."""
+        normalized_component_id = _coerce_required_string("component_id", component_id)
+        for surface in self.lifting_surfaces:
+            if surface.component_id == normalized_component_id:
+                return surface
+        raise KeyError(f"No lifting surface exists with component_id {normalized_component_id!r}.")
+
+    def main_wing_surface(self) -> LiftingSurfaceConfig:
+        """Return the single canonical main-wing surface."""
+        for surface in self.lifting_surfaces:
+            if surface.role == "main_wing":
+                return surface
+        raise RuntimeError("AircraftDefinition is missing its required main wing.")
+
     def active_component_ids(self) -> list[str]:
-        """Return stable component identifiers for the currently active surfaces."""
-        component_ids = [self.main_wing.component_id]
-        component_ids.extend(self.tail_assembly.active_component_ids())
+        """Return stable buildable component identifiers for all active surfaces."""
+        component_ids: list[str] = []
+        for surface in self.lifting_surfaces:
+            component_ids.extend(surface.built_component_ids())
         return component_ids
 
     def to_dict(self) -> dict[str, Any]:
@@ -616,8 +546,7 @@ class AircraftDefinition:
             "name": self.name,
             "description": self.description,
             "reference_geometry": self.reference_geometry.to_dict(),
-            "main_wing": self.main_wing.to_dict(),
-            "tail_assembly": self.tail_assembly.to_dict(),
+            "lifting_surfaces": [surface.to_dict() for surface in self.lifting_surfaces],
             "fuselage": self.fuselage.to_dict(),
             "design_variables": [variable.to_dict() for variable in self.design_variables],
             "extensions": _json_safe_copy("extensions", self.extensions),
@@ -629,15 +558,31 @@ class AircraftDefinition:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AircraftDefinition":
-        """Build an aircraft definition from a plain dictionary."""
+        """Build an aircraft definition from a plain dictionary.
+
+        The v1 fixed-field schema is intentionally unsupported in this builder.
+        """
+        legacy_keys = [key for key in _LEGACY_SCHEMA_KEYS if key in data]
+        if legacy_keys:
+            legacy_list = ", ".join(legacy_keys)
+            raise ValueError(
+                "Legacy aircraft-definition schema fields are no longer supported: "
+                f"{legacy_list}. Use lifting_surfaces instead."
+            )
+
         defaults = cls()
         return cls(
             schema_version=data.get("schema_version", SCHEMA_VERSION),
             name=data.get("name", defaults.name),
             description=data.get("description", defaults.description),
             reference_geometry=ReferenceGeometryConfig.from_dict(data.get("reference_geometry", {})),
-            main_wing=MainWingConfig.from_dict(data.get("main_wing", {})),
-            tail_assembly=TailAssemblyConfig.from_dict(data.get("tail_assembly", {})),
+            lifting_surfaces=[
+                LiftingSurfaceConfig.from_dict(surface)
+                for surface in data.get(
+                    "lifting_surfaces",
+                    [surface.to_dict() for surface in defaults.lifting_surfaces],
+                )
+            ],
             fuselage=FuselageConfig.from_dict(data.get("fuselage", {})),
             design_variables=[
                 DesignVariableSpec.from_dict(variable)
@@ -657,10 +602,13 @@ __all__ = [
     "AircraftDefinition",
     "DesignVariableSpec",
     "FuselageConfig",
-    "MainWingConfig",
+    "LiftingSurfaceConfig",
     "ReferenceGeometryConfig",
     "SCHEMA_VERSION",
-    "TAIL_TYPES",
-    "TailAssemblyConfig",
-    "TailSurfaceConfig",
+    "SURFACE_ORIENTATIONS",
+    "SURFACE_ROLES",
+    "default_horizontal_tail_surface",
+    "default_lifting_surfaces",
+    "default_main_wing_surface",
+    "default_vertical_tail_surface",
 ]

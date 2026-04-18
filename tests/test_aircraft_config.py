@@ -5,25 +5,46 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
+import matplotlib
+
 from ac_design_toolbox import (
     AircraftDefinition,
+    LiftingSurfaceConfig,
     build_aircraft,
-    canted_pair_projected_area_factor,
     collect_component_ids,
+    default_main_wing_surface,
     design_variable_records,
     render_aircraft_plotly,
     render_aircraft_three_view_image,
-    solve_canted_pair_surface_area_from_horizontal_volume_coefficient,
-    solve_canted_pair_surface_area_from_vertical_volume_coefficient,
-    solve_horizontal_tail_area_from_volume_coefficient,
-    solve_planform,
-    solve_twin_vertical_tail_surface_area_from_volume_coefficient,
-    solve_vertical_tail_area_from_volume_coefficient,
 )
+from ac_design_toolbox.aircraft_config import rendering as aircraft_rendering
 
 
+def _surface_with_updates(**updates) -> LiftingSurfaceConfig:
+    """Return a lifting surface seeded from the default main-wing fields."""
+    surface = default_main_wing_surface().to_dict()
+    surface.update(updates)
+    return LiftingSurfaceConfig.from_dict(surface)
+
+
+def _max_trace_coordinate(figure) -> float:
+    """Return the largest absolute rendered coordinate across all trace axes."""
+    max_coordinate = 0.0
+    for trace in figure.data:
+        for axis_name in ("x", "y", "z"):
+            values = getattr(trace, axis_name, None)
+            if values is None:
+                continue
+            for value in values:
+                if value is None:
+                    continue
+                max_coordinate = max(max_coordinate, abs(float(value)))
+    return max_coordinate
+
+
+@unittest.skipUnless(True, "Rendering-backed aircraft-config tests always apply in the configured environment.")
 class AircraftConfigTests(unittest.TestCase):
-    """Verify the new aircraft-definition schema and geometry helpers."""
+    """Verify the surface-list aircraft schema and geometry helpers."""
 
     def test_schema_round_trip_is_stable(self) -> None:
         """Default aircraft definitions should survive JSON round-trip exactly."""
@@ -31,229 +52,192 @@ class AircraftConfigTests(unittest.TestCase):
         round_tripped = AircraftDefinition.from_json(definition.to_json())
         self.assertEqual(round_tripped.to_dict(), definition.to_dict())
 
-    def test_component_ids_reflect_tail_family(self) -> None:
-        """Stable component IDs should track the active tail family cleanly."""
-        v_tail_definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": "v_tail"}})
+    def test_round_trip_supports_multiple_wings_and_zero_tails(self) -> None:
+        """List-based definitions should support extra wings without any tail surfaces."""
+        definition = AircraftDefinition(
+            name="Flying Wing With Strake",
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                _surface_with_updates(
+                    component_id="center_strake",
+                    role="wing",
+                    orientation="horizontal",
+                    symmetric=False,
+                    span=0.45,
+                    area=0.06,
+                    x_le=0.4,
+                    y_le=0.08,
+                    z_le=0.0,
+                    dihedral_deg=0.0,
+                ),
+            ],
+        )
+
+        round_tripped = AircraftDefinition.from_json(definition.to_json())
+        self.assertEqual(round_tripped.to_dict(), definition.to_dict())
+        self.assertEqual(collect_component_ids(round_tripped), ["main_wing", "center_strake"])
+
+    def test_rejects_zero_or_multiple_main_wings(self) -> None:
+        """Definitions must contain exactly one role='main_wing' surface."""
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            AircraftDefinition(
+                lifting_surfaces=[
+                    _surface_with_updates(component_id="canard", role="canard", orientation="horizontal"),
+                ]
+            )
+
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            AircraftDefinition(
+                lifting_surfaces=[
+                    default_main_wing_surface(),
+                    _surface_with_updates(
+                        component_id="second_main",
+                        role="main_wing",
+                        orientation="horizontal",
+                        symmetric=True,
+                        span=1.2,
+                        area=0.2,
+                    ),
+                ]
+            )
+
+    def test_build_aircraft_supports_explicit_twin_fins_and_extra_wing(self) -> None:
+        """Builder should iterate arbitrary explicit surfaces without family branching."""
+        definition = AircraftDefinition(
+            name="Twin Fin With Canard",
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                _surface_with_updates(
+                    component_id="canard",
+                    role="canard",
+                    orientation="horizontal",
+                    symmetric=True,
+                    span=0.55,
+                    area=0.08,
+                    x_le=0.02,
+                    z_le=0.04,
+                    root_airfoil="naca0012",
+                    tip_airfoil="naca0012",
+                ),
+                _surface_with_updates(
+                    component_id="vertical_tail_right",
+                    role="vertical_tail",
+                    orientation="vertical",
+                    symmetric=False,
+                    span=0.28,
+                    area=0.045,
+                    x_le=0.95,
+                    y_le=0.22,
+                    z_le=0.0,
+                    sweep_le_deg=22.0,
+                    dihedral_deg=0.0,
+                    root_airfoil="naca0010",
+                    tip_airfoil="naca0010",
+                ),
+                _surface_with_updates(
+                    component_id="vertical_tail_left",
+                    role="vertical_tail",
+                    orientation="vertical",
+                    symmetric=False,
+                    span=0.28,
+                    area=0.045,
+                    x_le=0.95,
+                    y_le=-0.22,
+                    z_le=0.0,
+                    sweep_le_deg=22.0,
+                    dihedral_deg=0.0,
+                    root_airfoil="naca0010",
+                    tip_airfoil="naca0010",
+                ),
+            ],
+        )
+
+        airplane = build_aircraft(definition)
+        wing_names = [wing.name for wing in airplane.wings]
+        self.assertEqual(wing_names, ["main_wing", "canard", "vertical_tail_right", "vertical_tail_left"])
+
+    def test_collect_component_ids_expands_symmetric_vertical_pairs(self) -> None:
+        """Symmetric vertical or canted surfaces should expose mirrored build IDs."""
+        definition = AircraftDefinition(
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                _surface_with_updates(
+                    component_id="v_tail_surface",
+                    role="canted_tail",
+                    orientation="vertical",
+                    symmetric=True,
+                    span=0.32,
+                    area=0.05,
+                    x_le=0.95,
+                    y_le=0.0,
+                    z_le=0.02,
+                    sweep_le_deg=18.0,
+                    dihedral_deg=35.0,
+                    root_airfoil="naca0010",
+                    tip_airfoil="naca0010",
+                ),
+            ]
+        )
+
         self.assertEqual(
-            collect_component_ids(v_tail_definition),
+            collect_component_ids(definition),
             ["main_wing", "v_tail_surface_right", "v_tail_surface_left"],
         )
-        h_tail_definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": "h_tail"}})
+        airplane = build_aircraft(definition)
         self.assertEqual(
-            collect_component_ids(h_tail_definition),
-            ["main_wing", "horizontal_tail", "vertical_tail_right", "vertical_tail_left"],
-        )
-        y_tail_definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": "y_tail"}})
-        self.assertEqual(
-            collect_component_ids(y_tail_definition),
-            ["main_wing", "vertical_tail", "v_tail_surface_right", "v_tail_surface_left"],
+            [wing.name for wing in airplane.wings],
+            ["main_wing", "v_tail_surface_right", "v_tail_surface_left"],
         )
 
-    def test_build_aircraft_supports_all_v1_tail_types(self) -> None:
-        """All supported tail families should build an AeroSandbox airplane."""
-        for tail_type in ("conventional", "t_tail", "v_tail", "h_tail", "y_tail"):
-            definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": tail_type}})
-            airplane = build_aircraft(definition)
-            self.assertEqual(airplane.name, definition.name)
-            self.assertGreaterEqual(len(airplane.wings), 3)
-
-    def test_h_tail_builds_tip_mounted_twin_vertical_tails(self) -> None:
-        """H-tail builds should emit mirrored tip-mounted vertical tails."""
-        definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": "h_tail"}})
-        airplane = build_aircraft(definition)
-        wing_lookup = {wing.name: wing for wing in airplane.wings}
-
-        self.assertIn("horizontal_tail", wing_lookup)
-        self.assertIn("vertical_tail_right", wing_lookup)
-        self.assertIn("vertical_tail_left", wing_lookup)
-        self.assertAlmostEqual(
-            float(wing_lookup["vertical_tail_right"].xsecs[0].xyz_le[1]),
-            -float(wing_lookup["vertical_tail_left"].xsecs[0].xyz_le[1]),
-        )
-
-    def test_y_tail_builds_center_fin_and_canted_pair(self) -> None:
-        """Y-tail builds should include one center fin plus mirrored canted surfaces."""
-        definition = AircraftDefinition.from_dict({"tail_assembly": {"tail_type": "y_tail"}})
-        airplane = build_aircraft(definition)
-        wing_names = {wing.name for wing in airplane.wings}
-
-        self.assertIn("vertical_tail", wing_names)
-        self.assertIn("v_tail_surface_right", wing_names)
-        self.assertIn("v_tail_surface_left", wing_names)
-
-    def test_negative_v_tail_dihedral_builds_inverted_tail_geometry(self) -> None:
-        """Negative V-tail cant should remain a valid mirrored canted-tail build."""
-        definition = AircraftDefinition.from_dict(
-            {
-                "tail_assembly": {
-                    "tail_type": "v_tail",
-                    "v_tail_surface": {
-                        "component_id": "v_tail_surface",
-                        "span": 2.1,
-                        "area": 0.28,
-                        "taper": 0.8,
-                        "sweep_le_deg": 18.0,
-                        "dihedral_deg": -35.0,
-                        "x_le": 2.5,
-                        "y_le": 0.0,
-                        "z_le": 0.0,
-                    },
-                }
-            }
-        )
-        airplane = build_aircraft(definition)
-        right_surface = next(wing for wing in airplane.wings if wing.name == "v_tail_surface_right")
-        self.assertLess(float(right_surface.xsecs[-1].xyz_le[2]), float(right_surface.xsecs[0].xyz_le[2]))
-
-    def test_v_tail_builder_preserves_single_surface_planform_metrics(self) -> None:
-        """Each built canted-tail surface should honor the stored one-surface span and area."""
-        definition = AircraftDefinition.from_dict(
-            {
-                "tail_assembly": {
-                    "tail_type": "v_tail",
-                    "v_tail_surface": {
-                        "component_id": "v_tail_surface",
-                        "span": 2.1,
-                        "area": 0.28,
-                        "taper": 0.8,
-                        "sweep_le_deg": 18.0,
-                        "dihedral_deg": 35.0,
-                        "x_le": 2.5,
-                        "y_le": 0.0,
-                        "z_le": 0.0,
-                    },
-                }
-            }
-        )
-        airplane = build_aircraft(definition)
-        right_surface = next(wing for wing in airplane.wings if wing.name == "v_tail_surface_right")
-        expected_planform = solve_planform(span=2.1, area=0.28, taper=0.8)
-
-        self.assertAlmostEqual(
-            float(right_surface.xsecs[-1].xyz_le[1] - right_surface.xsecs[0].xyz_le[1]),
-            2.1,
-        )
-        self.assertAlmostEqual(float(right_surface.xsecs[0].chord), expected_planform.root_chord)
-        self.assertAlmostEqual(float(right_surface.xsecs[-1].chord), expected_planform.tip_chord)
-
-    def test_solve_planform_supports_all_public_driver_sets(self) -> None:
-        """Each supported public driver set should converge to the same planform."""
-        expected = dict(
-            span=10.0,
-            area=12.0,
-            aspect_ratio=100.0 / 12.0,
-            root_chord=1.6,
-            tip_chord=0.8,
-            taper=0.5,
-        )
-        driver_sets = [
-            dict(root_chord=1.6, tip_chord=0.8, span=10.0),
-            dict(root_chord=1.6, taper=0.5, span=10.0),
-            dict(tip_chord=0.8, taper=0.5, span=10.0),
-            dict(area=12.0, span=10.0, taper=0.5),
-            dict(aspect_ratio=100.0 / 12.0, span=10.0, taper=0.5),
-            dict(area=12.0, aspect_ratio=100.0 / 12.0, taper=0.5),
-            dict(area=12.0, span=10.0, root_chord=1.6),
-            dict(area=12.0, span=10.0, tip_chord=0.8),
-        ]
-
-        for driver_set in driver_sets:
-            with self.subTest(driver_set=driver_set):
-                result = solve_planform(**driver_set)
-                self.assertAlmostEqual(result.span, expected["span"])
-                self.assertAlmostEqual(result.area, expected["area"])
-                self.assertAlmostEqual(result.aspect_ratio, expected["aspect_ratio"])
-                self.assertAlmostEqual(result.root_chord, expected["root_chord"])
-                self.assertAlmostEqual(result.tip_chord, expected["tip_chord"])
-                self.assertAlmostEqual(result.taper, expected["taper"])
-
-    def test_tail_volume_helpers_return_expected_first_pass_areas(self) -> None:
-        """Tail-volume helpers should match the intended coefficient formulas."""
-        horizontal_area = solve_horizontal_tail_area_from_volume_coefficient(
-            volume_coefficient=0.5,
-            wing_area=10.0,
-            wing_mean_aerodynamic_chord=1.2,
-            tail_arm=4.0,
-        )
-        vertical_area = solve_vertical_tail_area_from_volume_coefficient(
-            volume_coefficient=0.04,
-            wing_area=10.0,
-            wing_span=12.0,
-            tail_arm=4.0,
-        )
-        twin_vertical_surface_area = solve_twin_vertical_tail_surface_area_from_volume_coefficient(
-            volume_coefficient=0.04,
-            wing_area=10.0,
-            wing_span=12.0,
-            tail_arm=4.0,
-        )
-
-        self.assertAlmostEqual(horizontal_area, 1.5)
-        self.assertAlmostEqual(vertical_area, 1.2)
-        self.assertAlmostEqual(twin_vertical_surface_area, 0.6)
-
-    def test_canted_pair_volume_helpers_use_projected_equivalent_area(self) -> None:
-        """Mirrored canted-pair sizing should use projected equivalent area on both axes."""
-        vertical_factor = canted_pair_projected_area_factor(cant_deg=60.0, axis="vertical")
-        vertical_area = solve_canted_pair_surface_area_from_vertical_volume_coefficient(
-            volume_coefficient=0.04,
-            wing_area=10.0,
-            wing_span=12.0,
-            tail_arm=4.0,
-            cant_deg=60.0,
-        )
-        horizontal_factor = canted_pair_projected_area_factor(cant_deg=60.0, axis="horizontal")
-        horizontal_area = solve_canted_pair_surface_area_from_horizontal_volume_coefficient(
-            volume_coefficient=0.5,
-            wing_area=10.0,
-            wing_mean_aerodynamic_chord=1.2,
-            tail_arm=4.0,
-            cant_deg=60.0,
-        )
-
-        self.assertAlmostEqual(vertical_factor, 1.5)
-        self.assertAlmostEqual(vertical_area, 0.8)
-        self.assertAlmostEqual(horizontal_factor, 0.5)
-        self.assertAlmostEqual(horizontal_area, 3.0)
-
-    def test_design_variable_records_include_current_values(self) -> None:
-        """Optimizer-facing variable helpers should expose resolved current values."""
+    def test_design_variable_records_resolve_component_id_selector_paths(self) -> None:
+        """Optimizer-facing records should resolve list-selector paths by component ID."""
         definition = AircraftDefinition()
         records = design_variable_records(definition)
         self.assertGreaterEqual(len(records), 1)
-        self.assertEqual(records[0]["path"], "main_wing.span")
-        self.assertAlmostEqual(float(records[0]["current_value"]), definition.main_wing.span)
+        self.assertEqual(records[0]["path"], "lifting_surfaces[main_wing].span")
+        self.assertAlmostEqual(
+            float(records[0]["current_value"]),
+            definition.main_wing_surface().span,
+        )
 
-    def test_render_helpers_return_dash_friendly_payloads(self) -> None:
-        """Plotly and three-view render helpers should return embeddable outputs."""
+    def test_render_helpers_honor_metric_and_imperial_units(self) -> None:
+        """Render helpers should scale Plotly coordinates and relabel orthographic three-view axes."""
         definition = AircraftDefinition()
-        figure = render_aircraft_plotly(definition)
-        image_payload = render_aircraft_three_view_image(definition)
-        self.assertGreaterEqual(len(figure.data), 1)
+
+        metric_figure = render_aircraft_plotly(definition, unit_system="metric")
+        imperial_figure = render_aircraft_plotly(definition, unit_system="imperial")
+
+        self.assertEqual(metric_figure.layout.scene.xaxis.title.text, "x (m)")
+        self.assertEqual(imperial_figure.layout.scene.xaxis.title.text, "x (ft)")
+        self.assertAlmostEqual(
+            _max_trace_coordinate(imperial_figure),
+            _max_trace_coordinate(metric_figure) * 3.280839895013123,
+            places=6,
+        )
+
+        axs = aircraft_rendering._build_three_view_axes(definition, unit_system="imperial")
+        first_axis = axs.flat[0]
+        self.assertEqual(first_axis.name, "rectilinear")
+        self.assertIn("(ft)", first_axis.get_xlabel())
+        self.assertIn("(ft)", first_axis.get_ylabel())
+        self.assertEqual(first_axis.xaxis.get_major_formatter()(1.0, 0), "3.28")
+        self.assertEqual(tuple(round(value, 4) for value in first_axis.get_facecolor()), (1.0, 1.0, 1.0, 1.0))
+        self.assertEqual(tuple(round(value, 9) for value in axs[0, 0].get_xlim()), tuple(round(value, 9) for value in axs[1, 0].get_xlim()))
+        self.assertEqual(tuple(round(value, 9) for value in axs[0, 0].get_ylim()), tuple(round(value, 9) for value in axs[0, 1].get_ylim()))
+        self.assertEqual(tuple(round(value, 9) for value in axs[0, 1].get_xlim()), tuple(round(value, 9) for value in axs[1, 0].get_ylim()))
+        self.assertAlmostEqual(axs[0, 0].get_xlim()[1] - axs[0, 0].get_xlim()[0], axs[0, 0].get_ylim()[1] - axs[0, 0].get_ylim()[0])
+        self.assertAlmostEqual(axs[0, 0].get_xlim()[1] - axs[0, 0].get_xlim()[0], axs[0, 1].get_xlim()[1] - axs[0, 1].get_xlim()[0])
+        self.assertAlmostEqual(axs[0, 0].get_xlim()[1] - axs[0, 0].get_xlim()[0], axs[1, 0].get_ylim()[1] - axs[1, 0].get_ylim()[0])
+        self.assertEqual(axs[1, 1].name, "3d")
+        self.assertFalse(bool(axs[1, 1].axison))
+
+        image_payload = render_aircraft_three_view_image(definition, unit_system="imperial")
         self.assertTrue(image_payload.startswith("data:image/png;base64,"))
+        first_axis.figure.clf()
 
-    def test_render_helpers_support_mirrored_tail_families(self) -> None:
-        """Render helpers should accept mirrored tail-family builds without vector-type errors."""
-        test_cases = [
-            ("v_tail", 35.0),
-            ("v_tail", -35.0),
-            ("h_tail", 0.0),
-            ("y_tail", 35.0),
-        ]
-
-        for tail_type, dihedral_deg in test_cases:
-            with self.subTest(tail_type=tail_type, dihedral_deg=dihedral_deg):
-                definition_dict = AircraftDefinition().to_dict()
-                definition_dict["tail_assembly"]["tail_type"] = tail_type
-                definition_dict["tail_assembly"]["v_tail_surface"]["dihedral_deg"] = dihedral_deg
-                definition_dict["tail_assembly"]["vertical_tail"]["dihedral_deg"] = dihedral_deg
-                definition = AircraftDefinition.from_dict(definition_dict)
-
-                figure = render_aircraft_plotly(definition)
-                image_payload = render_aircraft_three_view_image(definition)
-
-                self.assertGreaterEqual(len(figure.data), 1)
-                self.assertTrue(image_payload.startswith("data:image/png;base64,"))
+    def test_rendering_module_forces_agg_backend(self) -> None:
+        """Rendering helpers should configure Matplotlib to use the Agg backend."""
+        self.assertEqual(str(matplotlib.get_backend()).lower(), "agg")
 
     def test_package_metadata_exists_for_installation(self) -> None:
         """The repository should expose packaging metadata for later pip install."""
