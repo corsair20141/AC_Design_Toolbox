@@ -15,8 +15,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import cos, radians, sin, tan
 
-from ac_design_toolbox.geometry._common import _chords_from_area_or_taper
-
 
 @dataclass(frozen=True)
 class PlanformSizingResult:
@@ -29,6 +27,109 @@ class PlanformSizingResult:
     tip_chord: float
     taper: float
     mean_aerodynamic_chord: float
+
+
+def _solve_trapezoid_planform(
+    *,
+    span: float | None,
+    area: float | None,
+    aspect_ratio: float | None,
+    root_chord: float | None,
+    tip_chord: float | None,
+    taper: float | None,
+    n_sections: int,
+) -> PlanformSizingResult:
+    """Solve trapezoidal planform scalars without importing geometry builders."""
+    if n_sections < 2:
+        raise ValueError("n_sections must be >= 2.")
+
+    has = {
+        "span": span is not None,
+        "area": area is not None,
+        "AR": aspect_ratio is not None,
+        "cr": root_chord is not None,
+        "ct": tip_chord is not None,
+        "lam": taper is not None,
+    }
+    provided_keys = {key for key, is_present in has.items() if is_present}
+    spec_sets = {
+        "cr_ct_span": {"cr", "ct", "span"},
+        "cr_lam_span": {"cr", "lam", "span"},
+        "ct_lam_span": {"ct", "lam", "span"},
+        "area_span_lam": {"area", "span", "lam"},
+        "AR_span_lam": {"AR", "span", "lam"},
+        "area_AR_lam": {"area", "AR", "lam"},
+        "area_span_cr": {"area", "span", "cr"},
+        "area_span_ct": {"area", "span", "ct"},
+    }
+    patterns = {name: provided_keys == required for name, required in spec_sets.items()}
+    matching_patterns = [name for name, is_match in patterns.items() if is_match]
+    if len(matching_patterns) != 1:
+        raise ValueError(
+            "Provide exactly one valid trapezoidal planform driver set. "
+            f"Received fields: {sorted(provided_keys)}."
+        )
+
+    pattern = matching_patterns[0]
+    if pattern == "cr_ct_span":
+        cr, ct, b = float(root_chord), float(tip_chord), float(span)
+    elif pattern == "cr_lam_span":
+        cr = float(root_chord)
+        lam = float(taper)
+        if lam <= 0.0:
+            raise ValueError("taper must be positive.")
+        ct, b = lam * cr, float(span)
+    elif pattern == "ct_lam_span":
+        ct = float(tip_chord)
+        lam = float(taper)
+        if lam <= 0.0:
+            raise ValueError("taper must be positive.")
+        cr, b = ct / lam, float(span)
+    elif pattern == "area_span_lam":
+        surface_area, b, lam = float(area), float(span), float(taper)
+        if lam <= 0.0:
+            raise ValueError("taper must be positive.")
+        cr = 2.0 * surface_area / (b * (1.0 + lam))
+        ct = lam * cr
+    elif pattern == "AR_span_lam":
+        b, lam = float(span), float(taper)
+        if lam <= 0.0:
+            raise ValueError("taper must be positive.")
+        surface_area = b**2 / float(aspect_ratio)
+        cr = 2.0 * surface_area / (b * (1.0 + lam))
+        ct = lam * cr
+    elif pattern == "area_AR_lam":
+        surface_area, aspect_ratio_value, lam = float(area), float(aspect_ratio), float(taper)
+        if lam <= 0.0:
+            raise ValueError("taper must be positive.")
+        b = (aspect_ratio_value * surface_area) ** 0.5
+        cr = 2.0 * surface_area / (b * (1.0 + lam))
+        ct = lam * cr
+    elif pattern == "area_span_cr":
+        surface_area, b, cr = float(area), float(span), float(root_chord)
+        ct = 2.0 * surface_area / b - cr
+    elif pattern == "area_span_ct":
+        surface_area, b, ct = float(area), float(span), float(tip_chord)
+        cr = 2.0 * surface_area / b - ct
+    else:
+        raise RuntimeError("Internal planform pattern selection error.")
+
+    if cr <= 0.0 or ct <= 0.0 or b <= 0.0:
+        raise ValueError("All solved planform quantities must be positive.")
+
+    lam = ct / cr
+    surface_area = 0.5 * b * (cr + ct)
+    aspect_ratio_value = b**2 / surface_area
+    mac = (2.0 / 3.0) * cr * (1.0 + lam + lam**2) / (1.0 + lam)
+    return PlanformSizingResult(
+        span=float(b),
+        area=float(surface_area),
+        aspect_ratio=float(aspect_ratio_value),
+        root_chord=float(cr),
+        tip_chord=float(ct),
+        taper=float(lam),
+        mean_aerodynamic_chord=float(mac),
+    )
 
 
 def solve_planform(
@@ -47,23 +148,14 @@ def solve_planform(
     translated into the lower-level geometry solver. Exactly one valid driver
     set must be provided.
     """
-    solve = _chords_from_area_or_taper(
+    return _solve_trapezoid_planform(
         span=span,
-        n_sections=max(int(n_sections), 2),
         area=area,
-        AR=aspect_ratio,
-        c_root=root_chord,
-        c_tip=tip_chord,
+        aspect_ratio=aspect_ratio,
+        root_chord=root_chord,
+        tip_chord=tip_chord,
         taper=taper,
-    )
-    return PlanformSizingResult(
-        span=float(solve.b),
-        area=float(solve.S),
-        aspect_ratio=float(solve.AR),
-        root_chord=float(solve.c_root),
-        tip_chord=float(solve.c_tip),
-        taper=float(solve.lam),
-        mean_aerodynamic_chord=float(solve.MAC),
+        n_sections=max(int(n_sections), 2),
     )
 
 

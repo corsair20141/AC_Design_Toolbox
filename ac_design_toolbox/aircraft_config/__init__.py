@@ -72,7 +72,7 @@ try:
         "render_aircraft_plotly",
         "render_aircraft_three_view_image",
     ]
-except ModuleNotFoundError:
+except (ImportError, ModuleNotFoundError):
     # Geometry-backed aircraft building and rendering require AeroSandbox and
     # related visualization dependencies.
     pass

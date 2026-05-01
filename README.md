@@ -10,6 +10,7 @@ The active package is organized so the public modules are also the modules that 
 - Weight-fraction and first-pass sizing calculations
 - Range, endurance, and simple propulsion/performance equations
 - Mission-performance evaluation for prescribed air-relative operating points
+- Non-solar battery, propulsion-electrical, load, and component-mass primitives
 - Canonical aircraft-definition schemas with JSON import/export and rendering helpers
 - Standard-atmosphere utilities
 - AeroSandbox aircraft geometry construction helpers
@@ -26,6 +27,8 @@ The new preferred import path is the `ac_design_toolbox` package:
   - `takeoff.py`, `weights.py`, `range_endurance.py`, `performance.py`, `geometry_tools.py`, and `lifting_line.py` each contain the code implied by their names
 - `ac_design_toolbox.mission`
   - mission-performance dataclasses and analytic operating-point evaluation
+- `ac_design_toolbox.energy`
+  - battery energy-bucket parameters, propulsion/load electrical limits, and component mass buildup
 - `ac_design_toolbox.aircraft_config`
   - canonical aircraft definitions, JSON helpers, geometry assembly, optimizer-variable metadata, and rendering helpers
 - `ac_design_toolbox.geometry`
@@ -336,6 +339,28 @@ from ac_design_toolbox.mission import AVLMissionPerformanceModel
 
 See [`examples/mission_performance_api.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/mission_performance_api.py)
 for a runnable example.
+
+## Energy Component API
+
+`ac_design_toolbox.energy` owns non-solar aircraft energy primitives that can
+be reused by external mission tools without importing Solar_UAS, Dash, or
+mission propagation code. The first-pass API includes:
+
+- `BatteryPackConfig`
+  - capacity, usable SOC bounds, initial SOC, voltage, charge/discharge
+    efficiency, optional power/current limits, and mass or specific energy
+- `PropulsionElectricalConfig`
+  - propulsion bus-power/current limits and propulsion component mass
+- `ElectricalLoadConfig`
+  - named reusable payload/hotel-load definitions and optional load mass
+- `AircraftEnergyConfig`
+  - base mass, battery, propulsion, loads, extra mass items, and mass breakdown
+- `EnergyLimitViolation`
+  - optimizer-facing component-limit diagnostics with signed margins
+
+The energy package deliberately does not simulate missions, wind, solar
+generation, or path geometry. External tools such as `Solar_UAS` schedule loads
+over a mission history and feed solar panel mass back as an external mass item.
 
 ## Example
 
