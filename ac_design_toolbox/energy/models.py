@@ -234,11 +234,12 @@ class BatteryPowerLimitResult:
 class BatteryPackConfig:
     """Energy-bucket battery model with optional power and current limits.
 
-    Stored units are Wh, V, A, W, kg, and Wh/kg. Positive battery-bus power
-    means discharge to serve aircraft loads; negative power means charging.
+    Stored units are Wh, V, A, W, kg, and Wh/kg. ``energy_capacity`` is stored
+    in Wh. Positive battery-bus power means discharge to serve aircraft loads;
+    negative power means charging.
     """
 
-    capacity: QuantityInput
+    energy_capacity: QuantityInput
     nominal_voltage: QuantityInput
     initial_soc: float = 1.0
     usable_soc_min: float = 0.0
@@ -254,10 +255,15 @@ class BatteryPackConfig:
 
     def __post_init__(self) -> None:
         """Normalize quantities and validate the energy bucket."""
-        capacity_wh = _coerce_quantity("capacity", self.capacity, "wh", "energy")
-        if capacity_wh <= 0.0:
-            raise ValueError("capacity must be positive.")
-        object.__setattr__(self, "capacity", capacity_wh)
+        energy_capacity_wh = _coerce_quantity(
+            "energy_capacity",
+            self.energy_capacity,
+            "wh",
+            "energy",
+        )
+        if energy_capacity_wh <= 0.0:
+            raise ValueError("energy_capacity must be positive.")
+        object.__setattr__(self, "energy_capacity", energy_capacity_wh)
 
         nominal_voltage_v = _coerce_quantity("nominal_voltage", self.nominal_voltage, "v", "voltage")
         if nominal_voltage_v <= 0.0:
@@ -317,22 +323,22 @@ class BatteryPackConfig:
             return self.mass
         if self.specific_energy is None:
             raise RuntimeError("Battery specific_energy was not initialized.")
-        return self.capacity / self.specific_energy
+        return self.energy_capacity / self.specific_energy
 
     @property
     def initial_energy_wh(self) -> float:
         """Return the initial stored battery energy."""
-        return self.capacity * self.initial_soc
+        return self.energy_capacity * self.initial_soc
 
     @property
     def usable_energy_min_wh(self) -> float:
         """Return the lower usable battery-energy bound."""
-        return self.capacity * self.usable_soc_min
+        return self.energy_capacity * self.usable_soc_min
 
     @property
     def usable_energy_max_wh(self) -> float:
         """Return the upper usable battery-energy bound."""
-        return self.capacity * self.usable_soc_max
+        return self.energy_capacity * self.usable_soc_max
 
     def apply_bus_power(self, energy_wh: float, battery_power: float, dt_seconds: float) -> float:
         """Advance stored energy for one interval using bus-side battery power."""
@@ -349,7 +355,7 @@ class BatteryPackConfig:
             delta_wh = (-power_w) * dt_s / 3600.0 * self.charge_efficiency
             next_energy = current_energy + delta_wh
 
-        return max(0.0, min(self.capacity, next_energy))
+        return max(0.0, min(self.energy_capacity, next_energy))
 
     def evaluate_power_limits(self, battery_power: QuantityInput) -> BatteryPowerLimitResult:
         """Check optional charge/discharge power and current limits."""

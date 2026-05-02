@@ -22,7 +22,7 @@ class EnergyModelTests(unittest.TestCase):
     def test_battery_normalizes_units_and_derives_mass(self) -> None:
         """Battery public fields should normalize to canonical scalar units."""
         battery = BatteryPackConfig(
-            capacity=(1.2, "kWh"),
+            energy_capacity=(1.2, "kWh"),
             nominal_voltage=22.2,
             initial_soc=0.8,
             usable_soc_min=0.2,
@@ -32,7 +32,7 @@ class EnergyModelTests(unittest.TestCase):
             specific_energy=(200.0, "Wh/kg"),
         )
 
-        self.assertAlmostEqual(battery.capacity, 1200.0)
+        self.assertAlmostEqual(battery.energy_capacity, 1200.0)
         self.assertAlmostEqual(battery.initial_energy_wh, 960.0)
         self.assertAlmostEqual(battery.usable_energy_min_wh, 240.0)
         self.assertAlmostEqual(battery.max_discharge_power or 0.0, 600.0)
@@ -43,7 +43,7 @@ class EnergyModelTests(unittest.TestCase):
         config = AircraftEnergyConfig(
             base_aircraft_mass=(10.0, "kg"),
             battery=BatteryPackConfig(
-                capacity=1000.0,
+                energy_capacity=1000.0,
                 nominal_voltage=24.0,
                 specific_energy=250.0,
             ),
@@ -67,7 +67,7 @@ class EnergyModelTests(unittest.TestCase):
     def test_battery_and_propulsion_limits_warn_and_flag_infeasible(self) -> None:
         """Optional current and power limits should return violations and advisory warnings."""
         battery = BatteryPackConfig(
-            capacity=1000.0,
+            energy_capacity=1000.0,
             nominal_voltage=20.0,
             max_discharge_power=400.0,
             max_discharge_current=18.0,
@@ -95,7 +95,7 @@ class EnergyModelTests(unittest.TestCase):
     def test_battery_energy_step_applies_efficiencies_without_mission_logic(self) -> None:
         """Battery energy math should be a component primitive, not mission propagation."""
         battery = BatteryPackConfig(
-            capacity=1000.0,
+            energy_capacity=1000.0,
             nominal_voltage=20.0,
             charge_efficiency=0.9,
             discharge_efficiency=0.8,

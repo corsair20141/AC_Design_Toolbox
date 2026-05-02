@@ -347,8 +347,9 @@ be reused by external mission tools without importing Solar_UAS, Dash, or
 mission propagation code. The first-pass API includes:
 
 - `BatteryPackConfig`
-  - capacity, usable SOC bounds, initial SOC, voltage, charge/discharge
-    efficiency, optional power/current limits, and mass or specific energy
+  - energy capacity in Wh, usable SOC bounds, initial SOC, voltage,
+    charge/discharge efficiency, optional power/current limits, and mass or
+    specific energy
 - `PropulsionElectricalConfig`
   - propulsion bus-power/current limits and propulsion component mass
 - `ElectricalLoadConfig`
