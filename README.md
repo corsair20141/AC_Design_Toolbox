@@ -11,6 +11,7 @@ The active package is organized so the public modules are also the modules that 
 - Range, endurance, and simple propulsion/performance equations
 - Mission-performance evaluation for prescribed air-relative operating points
 - Non-solar battery, propulsion-electrical, load, and component-mass primitives
+- Electric motor, ESC, battery, propeller, and operating-point matching primitives
 - Canonical aircraft-definition schemas with JSON import/export and rendering helpers
 - Standard-atmosphere utilities
 - AeroSandbox aircraft geometry construction helpers
@@ -29,6 +30,8 @@ The new preferred import path is the `ac_design_toolbox` package:
   - mission-performance dataclasses and analytic operating-point evaluation
 - `ac_design_toolbox.energy`
   - battery energy-bucket parameters, propulsion/load electrical limits, and component mass buildup
+- `ac_design_toolbox.propulsion`
+  - electric motor, ESC, battery voltage-sag, propeller, and motor-prop matching models
 - `ac_design_toolbox.aircraft_config`
   - canonical aircraft definitions, JSON helpers, geometry assembly, optimizer-variable metadata, and rendering helpers
 - `ac_design_toolbox.geometry`
@@ -105,6 +108,18 @@ from ac_design_toolbox.mission import (
     AnalyticMissionPerformanceModel,
     MissionAircraftPerformanceConfig,
     MissionOperatingPoint,
+)
+```
+
+For electric motor-prop operating-point matching:
+
+```python
+from ac_design_toolbox.propulsion import (
+    BatteryPack,
+    CoefficientPropeller,
+    ElectricMotor,
+    ElectronicSpeedController,
+    solve_motor_prop_operating_point,
 )
 ```
 
@@ -363,15 +378,92 @@ The energy package deliberately does not simulate missions, wind, solar
 generation, or path geometry. External tools such as `Solar_UAS` schedule loads
 over a mission history and feed solar panel mass back as an external mass item.
 
+## Electric Propulsion Operating-Point API
+
+`ac_design_toolbox.propulsion` owns first-pass motor, ESC, battery, and
+propeller operating-point analysis for off-the-shelf small aircraft and UAS
+propulsion components. It is meant for matching known components, not designing
+new propellers.
+
+The public API follows the repo's semantic unit-boundary convention:
+
+- public field names use domain names such as `voltage`, `current`, `torque`,
+  `rotational_speed`, `thrust`, `diameter`, and `density`
+- dimensional inputs accept bare scalars in the documented canonical unit or
+  `(value, "unit")` / `[value, "unit"]` pairs
+- public boundaries normalize immediately, then solver math uses plain floats
+- catalog motor Kv should be passed explicitly, for example
+  `kv=(920.0, "rpm/V")`; internally the motor equations use rad/s/V
+
+Stored computational units are V, A, ohm, N*m, rad/s, rpm for reported shaft
+speed, N, W, m/s, kg/m3, m, and Ah. The first-pass equations are intentionally
+transparent:
+
+- motor speed/back-EMF: `omega = Kv * v_back_emf`
+- motor torque: `Q = Kt * (i - i0)`, with `Kt = 1 / Kv`
+- motor terminal voltage: `v = v_back_emf + iR`
+- propeller advance ratio: `J = V / (nD)`
+- propeller thrust and power: `T = CT*rho*n^2*D^4` and
+  `P = CP*rho*n^3*D^5`
+- coupled motor-prop RPM is the root where motor output torque equals
+  propeller torque
+
+The first-pass battery model supports both fixed pack voltage and simple
+SOC-dependent open-circuit voltage:
+
+- `chemistry="constant"` keeps the original behavior:
+  `terminal_voltage = nominal_voltage - current * internal_resistance`
+- `chemistry="generic_lipo"` and `chemistry="generic_liion"` interpolate
+  approximate default V/cell curves versus SOC, multiply by `n_series`, then
+  apply the same internal-resistance sag
+- `chemistry="custom"` accepts a user-provided pack-level OCV-SOC curve for
+  manufacturer or measured data
+- `mass` can be specified directly for a known pack, or derived from
+  `capacity * nominal_voltage / specific_energy` for rubber-battery sizing
+
+Default OCV-SOC curves are approximate first-order placeholders. Replace them
+with manufacturer or measured cell data for validation-quality predictions.
+
+The first-pass component models are deliberately limited:
+
+- `BatteryPack` does not integrate SOC over time
+- battery voltage does not include temperature effects, aging, hysteresis, or
+  advanced equivalent-circuit dynamics
+- `ElectronicSpeedController` uses linear throttle, efficiency, and optional
+  resistance, not detailed PWM switching physics
+- `CoefficientPropeller` is for smoke tests and conceptual estimates
+- `TabulatedPropeller` interpolates CT/CP versus advance ratio and is the
+  intended future home for UIUC, APC, or static-test coefficient data
+- `ac_design_toolbox.propulsion.data` parses UIUC `J CT CP eta` files and APC
+  `PER3_*.dat` RPM blocks into `TabulatedPropeller` tables
+
+Optional backend adapters live under `ac_design_toolbox.propulsion.backends`.
+They import PyProp or AeroSandbox lazily so the core propulsion package remains
+usable without those packages. The current AeroSandbox adapter is for motor
+model comparison; the PyProp adapter is a scaffold for a future tested mapping.
+
+External mission tools such as `Solar_UAS` should call the propulsion solver at
+their own air-relative operating points and keep mission path propagation, wind,
+solar history, and battery SOC scheduling outside ACDT.
+
+See [`examples/run_propulsion_operating_point_demo.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/run_propulsion_operating_point_demo.py)
+for a minimal runnable motor, ESC, battery, and propeller operating-point
+example.
+
+For third-party propeller data downloads and local layout guidance, see
+[`data/propellers/README.md`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/data/propellers/README.md).
+
 ## Example
 
-See [`examples/refactored_toolbox_usage.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/refactored_toolbox_usage.py) for a geometry/AVL example and [`examples/mission_performance_api.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/mission_performance_api.py) for the new analytic mission-performance API.
+See [`examples/refactored_toolbox_usage.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/refactored_toolbox_usage.py) for a geometry/AVL example, [`examples/mission_performance_api.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/mission_performance_api.py) for the analytic mission-performance API, and [`examples/run_propulsion_operating_point_demo.py`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/examples/run_propulsion_operating_point_demo.py) for the electric propulsion operating-point API.
 
 ## External Dependencies And Limitations
 
 - Conceptual equations and atmosphere utilities use `numpy`, `scipy`, and `matplotlib`.
 - The mission-performance analytic path uses the package atmosphere helper plus a transparent parabolic drag model.
 - The aircraft-config builder and geometry/AVL modules require `aerosandbox`.
+- The core propulsion package does not require PyProp or AeroSandbox; optional
+  comparison adapters import those packages lazily.
 - The aircraft-config rendering helpers use `plotly` plus Matplotlib image export for three-view payloads.
 - AVL execution requires a working AVL executable, such as [`avl.exe`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/avl.exe).
 - Wind, ENU path propagation, and solar-power history are intentionally out of scope for `ac_design_toolbox`; those remain external mission-simulator responsibilities.

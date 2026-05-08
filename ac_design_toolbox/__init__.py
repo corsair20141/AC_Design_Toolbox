@@ -5,6 +5,7 @@ from ac_design_toolbox.atmosphere import *
 from ac_design_toolbox.conceptual import *
 from ac_design_toolbox.energy import *
 from ac_design_toolbox.mission import *
+from ac_design_toolbox.propulsion import *
 from ac_design_toolbox.api import *
 
 from ac_design_toolbox.aircraft_config import __all__ as _aircraft_config_all
@@ -13,6 +14,7 @@ from ac_design_toolbox.api import __all__ as _api_all
 from ac_design_toolbox.conceptual import __all__ as _conceptual_all
 from ac_design_toolbox.energy import __all__ as _energy_all
 from ac_design_toolbox.mission import __all__ as _mission_all
+from ac_design_toolbox.propulsion import __all__ as _propulsion_all
 
 __all__ = (
     list(_aircraft_config_all)
@@ -20,6 +22,7 @@ __all__ = (
     + list(_conceptual_all)
     + list(_energy_all)
     + list(_mission_all)
+    + list(_propulsion_all)
     + list(_api_all)
 )
 
