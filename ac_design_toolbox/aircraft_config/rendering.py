@@ -17,12 +17,17 @@ matplotlib.use("Agg")
 from matplotlib.collections import PolyCollection
 from matplotlib.ticker import FuncFormatter
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import plotly.graph_objects as go
 
 from ac_design_toolbox.mission.units import convert_value
 
 from .builder import build_aircraft
 from .models import AircraftDefinition
+
+
+CONTROL_PANEL_FACE_COLOR = "rgba(37, 99, 235, 0.28)"
+CONTROL_PANEL_LINE_COLOR = "#1d4ed8"
 
 
 def _coerce_airplane(definition_or_airplane: AircraftDefinition | Any) -> Any:
@@ -81,6 +86,120 @@ def _apply_plotly_units(figure: go.Figure, *, unit_system: str) -> go.Figure:
     return figure
 
 
+def _xsec_control_names(xsec: Any) -> set[str]:
+    """Return the control names attached to one AeroSandbox wing section."""
+    return {
+        str(control.name)
+        for control in getattr(xsec, "control_surfaces", [])
+        if str(getattr(control, "name", "")).strip()
+    }
+
+
+def _control_by_name(xsec: Any, name: str) -> Any | None:
+    """Return the first control with ``name`` on one wing section."""
+    for control in getattr(xsec, "control_surfaces", []):
+        if str(getattr(control, "name", "")) == name:
+            return control
+    return None
+
+
+def _control_chord_points(xsec: Any, hinge_point: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return hinge and trailing-edge points for a control on one wing section."""
+    xyz_le = np.asarray(xsec.xyz_le, dtype=float)
+    chord = float(xsec.chord)
+    hinge = xyz_le + np.asarray([float(hinge_point) * chord, 0.0, 0.0])
+    trailing = xyz_le + np.asarray([chord, 0.0, 0.0])
+    return hinge, trailing
+
+
+def _mirrored_control_panel(panel: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a control panel mirrored about the body XZ plane."""
+    mirrored_polygon = np.asarray(panel["polygon"], dtype=float).copy()
+    mirrored_hinge = np.asarray(panel["hinge"], dtype=float).copy()
+    mirrored_polygon[:, 1] *= -1.0
+    mirrored_hinge[:, 1] *= -1.0
+    return {
+        **panel,
+        "surface_name": f'{panel["surface_name"]}_mirrored',
+        "polygon": mirrored_polygon,
+        "hinge": mirrored_hinge,
+    }
+
+
+def _control_surface_panels(airplane: Any) -> list[dict[str, Any]]:
+    """Return undeflected control-surface panel footprints from built wing xsecs."""
+    panels: list[dict[str, Any]] = []
+    for wing in getattr(airplane, "wings", []):
+        wing_panels: list[dict[str, Any]] = []
+        xsecs = list(getattr(wing, "xsecs", []))
+        for index in range(len(xsecs) - 1):
+            inner = xsecs[index]
+            outer = xsecs[index + 1]
+            for control_name in sorted(_xsec_control_names(inner) & _xsec_control_names(outer)):
+                inner_control = _control_by_name(inner, control_name)
+                outer_control = _control_by_name(outer, control_name)
+                if inner_control is None or outer_control is None:
+                    continue
+
+                hinge_point = 0.5 * (
+                    float(getattr(inner_control, "hinge_point", 0.75))
+                    + float(getattr(outer_control, "hinge_point", 0.75))
+                )
+                inner_hinge, inner_trailing = _control_chord_points(inner, hinge_point)
+                outer_hinge, outer_trailing = _control_chord_points(outer, hinge_point)
+                wing_panels.append(
+                    {
+                        "surface_name": str(getattr(wing, "name", "surface")),
+                        "control_name": control_name,
+                        "polygon": np.asarray(
+                            [inner_hinge, outer_hinge, outer_trailing, inner_trailing],
+                            dtype=float,
+                        ),
+                        "hinge": np.asarray([inner_hinge, outer_hinge], dtype=float),
+                    }
+                )
+
+        panels.extend(wing_panels)
+        if bool(getattr(wing, "symmetric", False)):
+            panels.extend([_mirrored_control_panel(panel) for panel in wing_panels])
+    return panels
+
+
+def _add_plotly_control_overlays(figure: go.Figure, airplane: Any) -> None:
+    """Add translucent control-panel overlays and hinge lines to a Plotly figure."""
+    for panel in _control_surface_panels(airplane):
+        polygon = np.asarray(panel["polygon"], dtype=float)
+        hinge = np.asarray(panel["hinge"], dtype=float)
+        trace_name = f'{panel["surface_name"]} {panel["control_name"]}'
+        figure.add_trace(
+            go.Mesh3d(
+                x=polygon[:, 0],
+                y=polygon[:, 1],
+                z=polygon[:, 2],
+                i=[0, 0],
+                j=[1, 2],
+                k=[2, 3],
+                color=CONTROL_PANEL_FACE_COLOR,
+                opacity=0.32,
+                name=f"{trace_name} panel",
+                hoverinfo="name",
+                showlegend=True,
+            )
+        )
+        figure.add_trace(
+            go.Scatter3d(
+                x=hinge[:, 0],
+                y=hinge[:, 1],
+                z=hinge[:, 2],
+                mode="lines",
+                line={"color": CONTROL_PANEL_LINE_COLOR, "width": 5},
+                name=f"{trace_name} hinge",
+                hoverinfo="name",
+                showlegend=True,
+            )
+        )
+
+
 def render_aircraft_plotly(
     definition_or_airplane: AircraftDefinition | Any,
     *,
@@ -100,6 +219,7 @@ def render_aircraft_plotly(
         scene_aspectmode="data",
         title=airplane.name,
     )
+    _add_plotly_control_overlays(figure, airplane)
     return _apply_plotly_units(figure, unit_system=unit_system)
 
 
@@ -247,6 +367,69 @@ def _draw_projected_view(
     ax.set_ylabel(y_label)
 
 
+def _draw_projected_control_overlays(
+    ax: Any,
+    panels: list[dict[str, Any]],
+    *,
+    horizontal_axis: int,
+    vertical_axis: int,
+) -> None:
+    """Draw control-panel footprints on one orthographic three-view axis."""
+    if not panels:
+        return
+
+    polygons = [
+        np.asarray(panel["polygon"], dtype=float)[:, [horizontal_axis, vertical_axis]]
+        for panel in panels
+    ]
+    collection = PolyCollection(
+        polygons,
+        facecolors="#60a5fa",
+        edgecolors=CONTROL_PANEL_LINE_COLOR,
+        linewidths=0.65,
+        alpha=0.35,
+        closed=True,
+        zorder=6,
+    )
+    ax.add_collection(collection)
+
+    for panel in panels:
+        hinge = np.asarray(panel["hinge"], dtype=float)[:, [horizontal_axis, vertical_axis]]
+        ax.plot(
+            hinge[:, 0],
+            hinge[:, 1],
+            color=CONTROL_PANEL_LINE_COLOR,
+            linewidth=1.0,
+            zorder=7,
+        )
+
+
+def _draw_isometric_control_overlays(ax: Any, panels: list[dict[str, Any]]) -> None:
+    """Draw control-panel overlays on the isometric three-view panel."""
+    if not panels:
+        return
+
+    collection = Poly3DCollection(
+        [np.asarray(panel["polygon"], dtype=float) for panel in panels],
+        facecolors="#60a5fa",
+        edgecolors=CONTROL_PANEL_LINE_COLOR,
+        linewidths=0.6,
+        alpha=0.35,
+        zorder=8,
+    )
+    ax.add_collection3d(collection)
+    for panel in panels:
+        hinge = np.asarray(panel["hinge"], dtype=float)
+        ax.plot(
+            hinge[:, 0],
+            hinge[:, 1],
+            hinge[:, 2],
+            color=CONTROL_PANEL_LINE_COLOR,
+            linewidth=0.9,
+            zorder=9,
+        )
+
+
 def _style_isometric_axis(ax: Any) -> None:
     """Apply a clean presentation-only style to the isometric subplot."""
     ax.set_facecolor("#ffffff")
@@ -289,6 +472,7 @@ def _build_three_view_axes(
     airplane = _coerce_airplane(definition_or_airplane)
     points, faces = airplane.mesh_body(method="quad", thin_wings=False, stack_meshes=True)
     shared_limits = _shared_coordinate_limits(points)
+    control_panels = _control_surface_panels(airplane)
 
     figure, axs = plt.subplots(
         2,
@@ -310,6 +494,12 @@ def _build_three_view_axes(
         x_label="x",
         y_label="z",
     )
+    _draw_projected_control_overlays(
+        axs[0, 0],
+        control_panels,
+        horizontal_axis=0,
+        vertical_axis=2,
+    )
     _draw_projected_view(
         axs[0, 1],
         points,
@@ -321,6 +511,12 @@ def _build_three_view_axes(
         x_label="y",
         y_label="z",
     )
+    _draw_projected_control_overlays(
+        axs[0, 1],
+        control_panels,
+        horizontal_axis=1,
+        vertical_axis=2,
+    )
     _draw_projected_view(
         axs[1, 0],
         points,
@@ -331,6 +527,12 @@ def _build_three_view_axes(
         shared_limits=shared_limits,
         x_label="x",
         y_label="y",
+    )
+    _draw_projected_control_overlays(
+        axs[1, 0],
+        control_panels,
+        horizontal_axis=0,
+        vertical_axis=1,
     )
 
     axs[0, 0].set_title("Side", fontsize=12, color="#31353b", pad=10)
@@ -349,6 +551,7 @@ def _build_three_view_axes(
     )
     _style_isometric_axis(iso_ax)
     _set_isometric_limits(iso_ax, points)
+    _draw_isometric_control_overlays(iso_ax, control_panels)
     iso_ax.set_title("Iso", fontsize=12, color="#31353b", pad=12)
     axs[1, 1] = iso_ax
 

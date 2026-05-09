@@ -43,6 +43,7 @@ def make_wing(
     control_surface_deflection: float | None = None,
     control_surface_span_fraction: tuple[float, float] = (0.0, 0.0),
     control_hinge_point: float | None = 0.75,
+    control_surface_specs: list[dict] | None = None,
     span_frac_flap: tuple[float, float] | None = None,
     delta_flap: float | None = 0.0,
     hinge_point_flap: float | None = 0.75,
@@ -74,19 +75,40 @@ def make_wing(
             and (window[1] > window[0])
         )
 
-    e_ail = control_surface_span_fraction if control_surface_name is not None else None
-    has_ail = _valid_window(e_ail)
+    controls_to_place: list[dict] = []
+    if control_surface_specs:
+        controls_to_place.extend([dict(spec) for spec in control_surface_specs])
+    elif control_surface_name is not None:
+        controls_to_place.append(
+            {
+                "name": str(control_surface_name),
+                "symmetric": bool(control_surface_is_symmetric),
+                "deflection": 0.0 if control_surface_deflection is None else float(control_surface_deflection),
+                "hinge_point": 0.75 if control_hinge_point is None else float(control_hinge_point),
+                "span_fraction": control_surface_span_fraction,
+            }
+        )
 
-    e_flp = span_frac_flap
-    has_flp = _valid_window(e_flp)
+    if span_frac_flap is not None:
+        controls_to_place.append(
+            {
+                "name": "flap",
+                "symmetric": bool(flap_is_symmetric),
+                "deflection": 0.0 if delta_flap is None else float(delta_flap),
+                "hinge_point": 0.75 if hinge_point_flap is None else float(hinge_point_flap),
+                "span_fraction": span_frac_flap,
+            }
+        )
 
-    eta = _augmented_eta(n_sections_w, e_ail if has_ail else None)
-
-    if has_flp:
-        for edge in (e_flp[0], e_flp[1]):
-            if edge is None:
-                continue
-            if 0.0 < edge < 1.0 and all(abs(edge - e) > 1e-12 for e in eta):
+    valid_controls: list[dict] = []
+    eta = _augmented_eta(n_sections_w, None)
+    for control in controls_to_place:
+        window = control.get("span_fraction")
+        if not _valid_window(window):
+            continue
+        valid_controls.append(control)
+        for edge in (window[0], window[1]):
+            if 0.0 < float(edge) < 1.0 and all(abs(float(edge) - e) > 1e-12 for e in eta):
                 eta = np.sort(np.append(eta, float(edge)))
 
     eta = np.unique(np.round(eta.astype(float), 12))
@@ -127,37 +149,28 @@ def make_wing(
                 flags[i + 1] = True
         return flags
 
-    boundary_ail = _boundary_flags(e_ail)
-    boundary_flp = _boundary_flags(e_flp)
+    control_boundary_flags = [
+        _boundary_flags(control["span_fraction"])
+        for control in valid_controls
+    ]
 
     EPS = 1e-12
     xsecs = []
     for i in range(n_sections):
         controls = []
 
-        if has_ail:
-            in_window_ail = e_ail[0] - EPS <= eta[i] <= e_ail[1] + EPS
-            if in_window_ail or boundary_ail[i]:
-                if not any(getattr(c, "name", "") == str(control_surface_name) for c in controls):
+        for control, boundary_flags in zip(valid_controls, control_boundary_flags):
+            window = control["span_fraction"]
+            in_window = float(window[0]) - EPS <= eta[i] <= float(window[1]) + EPS
+            control_name = str(control["name"])
+            if in_window or boundary_flags[i]:
+                if not any(getattr(c, "name", "") == control_name for c in controls):
                     controls.append(
                         asb.ControlSurface(
-                            name=str(control_surface_name),
-                            symmetric=bool(control_surface_is_symmetric),
-                            deflection=0.0,
-                            hinge_point=(0.75 if control_hinge_point is None else float(control_hinge_point)),
-                        )
-                    )
-
-        if has_flp:
-            in_window_flp = e_flp[0] - EPS <= eta[i] <= e_flp[1] + EPS
-            if in_window_flp or boundary_flp[i]:
-                if not any(getattr(c, "name", "") == "flap" for c in controls):
-                    controls.append(
-                        asb.ControlSurface(
-                            name="flap",
-                            symmetric=bool(flap_is_symmetric),
-                            deflection=0.0,
-                            hinge_point=(0.75 if hinge_point_flap is None else float(hinge_point_flap)),
+                            name=control_name,
+                            symmetric=bool(control.get("symmetric", False)),
+                            deflection=float(control.get("deflection", 0.0) or 0.0),
+                            hinge_point=float(control.get("hinge_point", 0.75) or 0.75),
                         )
                     )
 
@@ -209,6 +222,7 @@ def make_ht(
     span_frac_elevator: tuple[float, float] | None = (0.20, 0.95),
     delta_elevator: float | None = 0.0,
     hinge_point_elevator: float | None = 0.75,
+    control_surface_specs: list[dict] | None = None,
     return_metrics: bool = False,
 ):
     """Build a horizontal tail surface with an optional elevator control."""
@@ -234,11 +248,12 @@ def make_ht(
         twist=twist,
         airfoil_root=airfoil_root,
         airfoil_tip=airfoil_tip,
-        control_surface_name=("elevator" if span_frac_elevator is not None else None),
+        control_surface_name=("elevator" if span_frac_elevator is not None and control_surface_specs is None else None),
         control_surface_is_symmetric=True,
         control_surface_deflection=(0.0 if delta_elevator is None else float(delta_elevator)),
         control_surface_span_fraction=(span_frac_elevator or (0.0, 0.0)),
         control_hinge_point=hinge_point_elevator,
+        control_surface_specs=control_surface_specs,
     )
 
     if return_metrics:
@@ -280,6 +295,7 @@ def make_vt(
     span_frac_rudder: tuple[float, float] | None = (0.20, 0.95),
     delta_rudder: float | None = 0.0,
     hinge_point_rudder: float | None = 0.75,
+    control_surface_specs: list[dict] | None = None,
     return_metrics: bool = False,
 ):
     """Build a vertical tail by constructing a wing and rotating it into place."""
@@ -308,11 +324,12 @@ def make_vt(
         twist=twist,
         airfoil_root=airfoil_root,
         airfoil_tip=airfoil_tip,
-        control_surface_name=("rudder" if span_frac_rudder is not None else None),
+        control_surface_name=("rudder" if span_frac_rudder is not None and control_surface_specs is None else None),
         control_surface_is_symmetric=True,
         control_surface_deflection=(0.0 if delta_rudder is None else float(delta_rudder)),
         control_surface_span_fraction=(span_frac_rudder or (0.0, 0.0)),
         control_hinge_point=hinge_point_rudder,
+        control_surface_specs=control_surface_specs,
     )
 
     w_z = _rotate_wing_about_x(w_y, +90.0)

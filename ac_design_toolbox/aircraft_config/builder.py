@@ -46,6 +46,23 @@ def _horizontal_build_inputs(surface: LiftingSurfaceConfig) -> tuple[float, floa
     return 2.0 * float(surface.span), 2.0 * float(surface.area), False
 
 
+def _control_surface_specs(surface: LiftingSurfaceConfig) -> list[dict]:
+    """Return make_wing-compatible control-surface dictionaries."""
+    return [
+        {
+            "name": control.name,
+            "symmetric": control.symmetric,
+            "deflection": control.deflection_deg,
+            "hinge_point": control.hinge_point,
+            "span_fraction": (
+                control.span_start_fraction,
+                control.span_end_fraction,
+            ),
+        }
+        for control in surface.control_surfaces
+    ]
+
+
 def _build_horizontal_surface(surface: LiftingSurfaceConfig) -> asb.Wing:
     """Build one horizontal lifting surface from the canonical config."""
     span, area, symmetric = _horizontal_build_inputs(surface)
@@ -68,6 +85,7 @@ def _build_horizontal_surface(surface: LiftingSurfaceConfig) -> asb.Wing:
         twist=(surface.twist_root_deg, surface.twist_tip_deg),
         airfoil_root=_as_airfoil(surface.root_airfoil),
         airfoil_tip=_as_airfoil(surface.tip_airfoil),
+        control_surface_specs=_control_surface_specs(surface),
     )
     wing.name = surface.component_id
     return wing
@@ -100,6 +118,7 @@ def _build_single_vertical_surface(
         airfoil_tip=_as_airfoil(surface.tip_airfoil),
         span_frac_rudder=None,
         delta_rudder=0.0,
+        control_surface_specs=_control_surface_specs(surface),
     )
     tail.name = name
     return tail

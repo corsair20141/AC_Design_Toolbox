@@ -153,6 +153,7 @@ when the object needs to be:
 The public interface is centered on:
 
 - `AircraftDefinition`
+- `ControlSurfaceConfig`
 - `LiftingSurfaceConfig`
 - `DesignVariableSpec`
 - `build_aircraft(...)`
@@ -163,6 +164,8 @@ The public interface is centered on:
 
 - canonical geometry for the reference point, explicit `lifting_surfaces`, and a simple fuselage
 - stable component IDs for buildable lifting surfaces, including mirrored right/left IDs for symmetric vertical surfaces
+- optional control-surface records on each lifting surface, stored as
+  `lifting_surfaces[*].control_surfaces`
 - optimizer-facing variable metadata through `design_variables`
 - extension data under `extensions`
 
@@ -185,6 +188,11 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
   - symmetric horizontal surfaces build as mirrored AeroSandbox wings
   - symmetric vertical surfaces build as right/left mirrored component pairs
   - non-symmetric surfaces are literal one-side components
+- Control surfaces are explicit per-surface records with name, root-to-tip span
+  fractions, hinge point, symmetry, and deflection angle. The aircraft builder
+  emits them as AeroSandbox `ControlSurface` objects for AVL/performance
+  workflows, while the rendering helpers draw undeflected hinge and panel
+  overlays in Plotly and three-view outputs.
 
 The aircraft-config package also exposes public first-pass sizing helpers for
 external tools that need to stay aligned with the canonical geometry math:
@@ -205,6 +213,7 @@ Example:
 ```python
 from ac_design_toolbox.aircraft_config import (
     AircraftDefinition,
+    ControlSurfaceConfig,
     LiftingSurfaceConfig,
     build_aircraft,
     render_aircraft_three_view_image,
@@ -228,6 +237,16 @@ definition = AircraftDefinition(
             z_le=0.05,
             root_airfoil="naca4412",
             tip_airfoil="naca4412",
+            control_surfaces=[
+                ControlSurfaceConfig(
+                    name="aileron",
+                    span_start_fraction=0.65,
+                    span_end_fraction=0.95,
+                    hinge_point=0.75,
+                    symmetric=False,
+                    deflection_deg=0.0,
+                )
+            ],
         )
     ],
 )

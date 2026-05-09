@@ -9,6 +9,7 @@ import matplotlib
 
 from ac_design_toolbox import (
     AircraftDefinition,
+    ControlSurfaceConfig,
     LiftingSurfaceConfig,
     build_aircraft,
     collect_component_ids,
@@ -76,6 +77,80 @@ class AircraftConfigTests(unittest.TestCase):
         round_tripped = AircraftDefinition.from_json(definition.to_json())
         self.assertEqual(round_tripped.to_dict(), definition.to_dict())
         self.assertEqual(collect_component_ids(round_tripped), ["main_wing", "center_strake"])
+
+    def test_control_surfaces_round_trip_and_build_into_geometry(self) -> None:
+        """Canonical control surfaces should serialize and build into AeroSandbox xsecs."""
+        definition = AircraftDefinition(
+            lifting_surfaces=[
+                _surface_with_updates(
+                    control_surfaces=[
+                        ControlSurfaceConfig(
+                            name="aileron",
+                            span_start_fraction=0.65,
+                            span_end_fraction=0.95,
+                            hinge_point=0.72,
+                            symmetric=False,
+                            deflection_deg=3.0,
+                        ),
+                        ControlSurfaceConfig(
+                            name="flap",
+                            span_start_fraction=0.20,
+                            span_end_fraction=0.55,
+                            hinge_point=0.76,
+                            symmetric=True,
+                            deflection_deg=0.0,
+                        ),
+                    ],
+                )
+            ]
+        )
+
+        round_tripped = AircraftDefinition.from_json(definition.to_json())
+        self.assertEqual(round_tripped.to_dict(), definition.to_dict())
+
+        airplane = build_aircraft(round_tripped)
+        control_names = {
+            control.name
+            for xsec in airplane.wings[0].xsecs
+            for control in getattr(xsec, "control_surfaces", [])
+        }
+        self.assertEqual(control_names, {"aileron", "flap"})
+
+    def test_control_surface_validation_rejects_invalid_ranges(self) -> None:
+        """Control surface span and hinge definitions should reject invalid ranges."""
+        with self.assertRaisesRegex(ValueError, "greater than span_start"):
+            ControlSurfaceConfig(span_start_fraction=0.8, span_end_fraction=0.2)
+
+        with self.assertRaisesRegex(ValueError, "hinge_point"):
+            ControlSurfaceConfig(hinge_point=1.0)
+
+    def test_render_helpers_include_control_surface_overlays(self) -> None:
+        """Geometry renderers should draw control-surface footprint overlays."""
+        definition = AircraftDefinition(
+            lifting_surfaces=[
+                _surface_with_updates(
+                    control_surfaces=[
+                        ControlSurfaceConfig(
+                            name="aileron",
+                            span_start_fraction=0.65,
+                            span_end_fraction=0.95,
+                            hinge_point=0.75,
+                            symmetric=False,
+                        )
+                    ],
+                )
+            ]
+        )
+
+        figure = render_aircraft_plotly(definition)
+        trace_names = [str(trace.name) for trace in figure.data]
+        self.assertTrue(any("main_wing aileron panel" == name for name in trace_names))
+        self.assertTrue(any("main_wing aileron hinge" == name for name in trace_names))
+
+        axs = aircraft_rendering._build_three_view_axes(definition)
+        self.assertGreaterEqual(len(axs[0, 0].collections), 2)
+        self.assertGreaterEqual(len(axs[0, 0].lines), 1)
+        axs[0, 0].figure.clf()
 
     def test_rejects_zero_or_multiple_main_wings(self) -> None:
         """Definitions must contain exactly one role='main_wing' surface."""

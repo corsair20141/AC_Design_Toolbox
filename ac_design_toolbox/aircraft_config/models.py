@@ -54,12 +54,92 @@ def _coerce_positive_float(name: str, value: Any) -> float:
     return scalar_value
 
 
+def _coerce_fraction(name: str, value: Any) -> float:
+    """Return a finite scalar fraction in the inclusive range ``[0, 1]``."""
+    scalar_value = float(value)
+    if not isfinite(scalar_value):
+        raise ValueError(f"{name} must be finite.")
+    if scalar_value < 0.0 or scalar_value > 1.0:
+        raise ValueError(f"{name} must be between 0 and 1.")
+    return scalar_value
+
+
+def _coerce_finite_float(name: str, value: Any) -> float:
+    """Return a finite scalar float."""
+    scalar_value = float(value)
+    if not isfinite(scalar_value):
+        raise ValueError(f"{name} must be finite.")
+    return scalar_value
+
+
 def _json_safe_copy(name: str, value: Any) -> Any:
     """Return a JSON-safe deep copy of extension-like payloads."""
     try:
         return json.loads(json.dumps(value))
     except TypeError as exc:
         raise TypeError(f"{name} must be JSON-serializable.") from exc
+
+
+@dataclass
+class ControlSurfaceConfig:
+    """Canonical control-surface definition for one lifting surface.
+
+    Span fractions are measured from the lifting-surface root toward the tip in
+    the same normalized convention used by the geometry builders. Deflection is
+    stored in degrees for analysis workflows; geometry previews draw the
+    undeflected panel footprint.
+    """
+
+    name: str = "aileron"
+    span_start_fraction: float = 0.65
+    span_end_fraction: float = 0.95
+    hinge_point: float = 0.75
+    symmetric: bool = False
+    deflection_deg: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Normalize and validate the control-surface definition."""
+        self.name = _coerce_required_string("name", self.name)
+        self.span_start_fraction = _coerce_fraction(
+            "span_start_fraction",
+            self.span_start_fraction,
+        )
+        self.span_end_fraction = _coerce_fraction(
+            "span_end_fraction",
+            self.span_end_fraction,
+        )
+        if self.span_end_fraction <= self.span_start_fraction:
+            raise ValueError("span_end_fraction must be greater than span_start_fraction.")
+
+        self.hinge_point = _coerce_fraction("hinge_point", self.hinge_point)
+        if self.hinge_point <= 0.0 or self.hinge_point >= 1.0:
+            raise ValueError("hinge_point must be greater than 0 and less than 1.")
+
+        self.symmetric = bool(self.symmetric)
+        self.deflection_deg = _coerce_finite_float("deflection_deg", self.deflection_deg)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the control-surface configuration to a plain dictionary."""
+        return {
+            "name": self.name,
+            "span_start_fraction": self.span_start_fraction,
+            "span_end_fraction": self.span_end_fraction,
+            "hinge_point": self.hinge_point,
+            "symmetric": self.symmetric,
+            "deflection_deg": self.deflection_deg,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ControlSurfaceConfig":
+        """Build the control-surface configuration from a plain dictionary."""
+        return cls(
+            name=data.get("name", "control_surface"),
+            span_start_fraction=data.get("span_start_fraction", 0.65),
+            span_end_fraction=data.get("span_end_fraction", 0.95),
+            hinge_point=data.get("hinge_point", 0.75),
+            symmetric=data.get("symmetric", False),
+            deflection_deg=data.get("deflection_deg", 0.0),
+        )
 
 
 @dataclass
@@ -135,6 +215,7 @@ class LiftingSurfaceConfig:
     n_spanwise: int = 36
     chordwise_spacing: str = "cosine"
     spanwise_spacing: str = "cosine"
+    control_surfaces: list[ControlSurfaceConfig] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Normalize the surface geometry into canonical computational units."""
@@ -165,6 +246,10 @@ class LiftingSurfaceConfig:
         self.n_sections = int(self.n_sections)
         self.n_chordwise = int(self.n_chordwise)
         self.n_spanwise = int(self.n_spanwise)
+        self.control_surfaces = [
+            control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
+            for control in self.control_surfaces
+        ]
 
         if self.span <= 0.0:
             raise ValueError("span must be positive.")
@@ -212,6 +297,7 @@ class LiftingSurfaceConfig:
             "n_spanwise": self.n_spanwise,
             "chordwise_spacing": self.chordwise_spacing,
             "spanwise_spacing": self.spanwise_spacing,
+            "control_surfaces": [control.to_dict() for control in self.control_surfaces],
         }
 
     @classmethod
@@ -239,6 +325,10 @@ class LiftingSurfaceConfig:
             n_spanwise=data.get("n_spanwise", 21),
             chordwise_spacing=data.get("chordwise_spacing", "cosine"),
             spanwise_spacing=data.get("spanwise_spacing", "cosine"),
+            control_surfaces=[
+                control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
+                for control in data.get("control_surfaces", [])
+            ],
         )
 
 
@@ -600,6 +690,7 @@ class AircraftDefinition:
 
 __all__ = [
     "AircraftDefinition",
+    "ControlSurfaceConfig",
     "DesignVariableSpec",
     "FuselageConfig",
     "LiftingSurfaceConfig",
