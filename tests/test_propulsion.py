@@ -17,8 +17,14 @@ from ac_design_toolbox import (
     parse_apc_performance_text,
     parse_uiuc_performance_text,
     solve_motor_prop_operating_point,
+    solve_throttle_for_required_thrust,
 )
-from ac_design_toolbox.propulsion.data import load_apc_table_for_rpm, load_uiuc_performance_file
+from ac_design_toolbox.propulsion.data import (
+    load_apc_performance_file,
+    load_apc_table_for_rpm,
+    load_uiuc_performance_file,
+    load_uiuc_table_set,
+)
 from ac_design_toolbox.propulsion.backends import pyprop_backend
 
 
@@ -194,6 +200,33 @@ class PropulsionModelTests(unittest.TestCase):
             apc_propeller = load_apc_table_for_rpm(apc_path, 1000.0)
             self.assertAlmostEqual(apc_propeller.diameter, 10.5 * 0.0254)
 
+    def test_propeller_table_set_evaluates_nearest_rpm_table(self) -> None:
+        """RPM-indexed table sets should satisfy the propeller model protocol."""
+        table_set = parse_apc_performance_text(
+            """
+            PROP RPM = 1000
+            V J Pe Ct Cp PWR Torque Thrust PWR Torque Thrust THR/PWR Mach Reyn FOM
+            0.0 0.0 0.0 0.10 0.040 0 0 0 0 0 0 0 0 0 0
+            1.0 0.1 0.0 0.09 0.039 0 0 0 0 0 0 0 0 0 0
+            PROP RPM = 2000
+            V J Pe Ct Cp PWR Torque Thrust PWR Torque Thrust THR/PWR Mach Reyn FOM
+            0.0 0.0 0.0 0.20 0.080 0 0 0 0 0 0 0 0 0 0
+            1.0 0.1 0.0 0.18 0.078 0 0 0 0 0 0 0 0 0 0
+            """,
+            diameter=(10.0, "in"),  # propeller diameter
+            name="APC table-set protocol sample",
+            source="PER3_10x5E.dat",
+        )
+
+        result = table_set.evaluate(
+            airspeed=0.0,  # m/s
+            rotational_speed=1750.0,  # rpm, nearest table is 2000 rpm
+            density=1.225,  # kg/m^3
+        )
+
+        self.assertAlmostEqual(result.ct or 0.0, 0.20)
+        self.assertTrue(any("nearest RPM table 2000" in note for note in result.notes))
+
     def test_motor_prop_operating_point_converges(self) -> None:
         """A simple coefficient-prop case should converge to torque balance."""
         motor = ElectricMotor(
@@ -235,6 +268,77 @@ class PropulsionModelTests(unittest.TestCase):
         self.assertAlmostEqual(result.residual_torque, 0.0, places=5)
         self.assertGreater(result.propeller.thrust, 0.0)
         self.assertGreater(result.motor.current, motor.no_load_current)
+
+    def test_motor_prop_solver_accepts_apc_table_set(self) -> None:
+        """Coupled motor-prop solving should accept an APC table set directly."""
+        import tempfile
+        from pathlib import Path
+
+        motor = ElectricMotor(kv=(920.0, "rpm/V"), resistance=0.09, no_load_current=0.7)
+        battery = BatteryPack(nominal_voltage=14.8, internal_resistance=0.03, capacity=5.0)
+        esc = ElectronicSpeedController(efficiency=0.97, resistance=0.01)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apc_path = Path(tmpdir) / "PER3_10x5E.dat"
+            apc_path.write_text(
+                "PROP RPM = 1000\n"
+                "V J Pe Ct Cp PWR Torque Thrust PWR Torque Thrust THR/PWR Mach Reyn FOM\n"
+                "0.0 0.0 0.0 0.09 0.040 0 0 0 0 0 0 0 0 0 0\n"
+                "10.0 0.9 0.0 0.02 0.020 0 0 0 0 0 0 0 0 0 0\n"
+                "PROP RPM = 12000\n"
+                "V J Pe Ct Cp PWR Torque Thrust PWR Torque Thrust THR/PWR Mach Reyn FOM\n"
+                "0.0 0.0 0.0 0.09 0.040 0 0 0 0 0 0 0 0 0 0\n"
+                "10.0 0.9 0.0 0.02 0.020 0 0 0 0 0 0 0 0 0 0\n",
+                encoding="utf-8",
+            )
+            propeller = load_apc_performance_file(apc_path, extrapolation_mode="clip")
+
+        result = solve_motor_prop_operating_point(
+            motor=motor,
+            propeller=propeller,
+            battery=battery,
+            esc=esc,
+            throttle=0.8,
+            airspeed=8.0,  # m/s
+            density=1.225,  # kg/m^3
+            rotational_speed_bounds=(1000.0, 20000.0),  # rpm
+        )
+
+        self.assertTrue(result.converged, result.notes)
+        self.assertGreater(result.propeller.thrust, 0.0)
+        self.assertGreater(result.motor.current, motor.no_load_current)
+
+    def test_required_thrust_solver_accepts_uiuc_table_set(self) -> None:
+        """Throttle solving should accept a UIUC table set directly."""
+        import tempfile
+        from pathlib import Path
+
+        motor = ElectricMotor(kv=(920.0, "rpm/V"), resistance=0.09, no_load_current=0.7)
+        battery = BatteryPack(nominal_voltage=14.8, internal_resistance=0.03, capacity=5.0)
+        esc = ElectronicSpeedController(efficiency=0.97, resistance=0.01)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir) / "apcsf_10x5_1000.txt"
+            second = Path(tmpdir) / "apcsf_10x5_12000.txt"
+            table_text = "J CT CP eta\n0.0 0.09 0.040 0.00\n0.9 0.02 0.020 0.40\n"
+            first.write_text(table_text, encoding="utf-8")
+            second.write_text(table_text, encoding="utf-8")
+            propeller = load_uiuc_table_set([first, second], extrapolation_mode="clip")
+
+        result = solve_throttle_for_required_thrust(
+            motor=motor,
+            propeller=propeller,
+            required_thrust=0.5,  # N
+            battery=battery,
+            esc=esc,
+            airspeed=8.0,  # m/s
+            density=1.225,  # kg/m^3
+            rotational_speed_bounds=(1000.0, 20000.0),  # rpm
+            throttle_bounds=(0.1, 1.0),
+        )
+
+        self.assertTrue(result.converged, result.notes)
+        self.assertAlmostEqual(result.propeller.thrust, 0.5, delta=0.05)
 
     def test_battery_constant_voltage_remains_backward_compatible(self) -> None:
         """Default battery behavior should remain nominal-voltage minus IR sag."""

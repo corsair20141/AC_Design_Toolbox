@@ -8,7 +8,7 @@ cache remote files, or infer a single universal propeller model across RPM.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 from typing import Iterable
@@ -45,6 +45,37 @@ class PropellerTableSet:
 
         nearest_rpm = min(self.tables_by_rpm, key=lambda value: abs(value - rpm))
         return self.tables_by_rpm[nearest_rpm]
+
+    def evaluate(
+        self,
+        *,
+        airspeed: QuantityInput,
+        rotational_speed: QuantityInput,
+        density: QuantityInput = 1.225,
+    ):
+        """Evaluate with the nearest available RPM table.
+
+        Motor-prop solvers own the continuous shaft-speed solve. Tabulated
+        propeller data sets are discrete by RPM, so this adapter selects the
+        closest measured/simulated table at each solver query and evaluates the
+        coefficients at the requested shaft speed.
+        """
+        rotational_speed_rpm = coerce_quantity("rotational_speed", rotational_speed, "rpm", "rotational_speed")
+        nearest_rpm = min(self.tables_by_rpm, key=lambda value: abs(value - rotational_speed_rpm))
+        point = self.tables_by_rpm[nearest_rpm].evaluate(
+            airspeed=airspeed,
+            rotational_speed=rotational_speed_rpm,
+            density=density,
+        )
+        if nearest_rpm == rotational_speed_rpm:
+            return point
+        return replace(
+            point,
+            notes=(
+                f"Selected nearest RPM table {nearest_rpm:g} for requested {rotational_speed_rpm:g} rpm.",
+            )
+            + point.notes,
+        )
 
 
 def _read_text(path: str | Path) -> tuple[str, str]:
