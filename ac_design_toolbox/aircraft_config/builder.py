@@ -7,9 +7,10 @@ from copy import deepcopy
 import aerosandbox as asb
 import aerosandbox.numpy as np
 
+from ac_design_toolbox.geometry._common import _airfoil_blend_array, _chords_from_area_or_taper
 from ac_design_toolbox.geometry.surfaces import make_vt, make_wing
 
-from .models import AircraftDefinition, LiftingSurfaceConfig
+from .models import AircraftDefinition, LiftingSurfaceConfig, SurfaceAnchorConfig
 
 
 def _as_airfoil(value: str | asb.Airfoil) -> asb.Airfoil:
@@ -63,6 +64,80 @@ def _control_surface_specs(surface: LiftingSurfaceConfig) -> list[dict]:
     ]
 
 
+def _control_surfaces_at_eta(control_specs: list[dict], eta: float) -> list[asb.ControlSurface]:
+    """Return controls active at one normalized span station."""
+    controls = []
+    eps = 1e-12
+    for control in control_specs:
+        span_fraction = control.get("span_fraction")
+        if span_fraction is None or len(span_fraction) != 2:
+            continue
+        start, end = float(span_fraction[0]), float(span_fraction[1])
+        if start - eps <= eta <= end + eps:
+            controls.append(
+                asb.ControlSurface(
+                    name=str(control["name"]),
+                    symmetric=bool(control.get("symmetric", False)),
+                    deflection=float(control.get("deflection", 0.0) or 0.0),
+                    hinge_point=float(control.get("hinge_point", 0.75) or 0.75),
+                )
+            )
+    return controls
+
+
+def _anchored_eta(surface: LiftingSurfaceConfig) -> np.ndarray:
+    """Return section stations with control edges included exactly."""
+    eta = np.linspace(0.0, 1.0, int(surface.n_sections))
+    for control in _control_surface_specs(surface):
+        span_fraction = control.get("span_fraction")
+        if span_fraction is None or len(span_fraction) != 2:
+            continue
+        start, end = float(span_fraction[0]), float(span_fraction[1])
+        if 0.0 < start < 1.0:
+            eta = np.append(eta, start)
+        if 0.0 < end < 1.0:
+            eta = np.append(eta, end)
+    return np.unique(np.round(eta.astype(float), 12))
+
+
+def _interpolate_wing_xsec_values(wing: asb.Wing, span_fraction: float) -> tuple[np.ndarray, float]:
+    """Return leading-edge point and chord at one root-to-tip station."""
+    xsecs = list(getattr(wing, "xsecs", []))
+    if len(xsecs) < 2:
+        raise ValueError(f"Target surface {wing.name!r} must contain at least two xsecs.")
+
+    stations = np.linspace(0.0, 1.0, len(xsecs))
+    points = np.asarray([xsec.xyz_le for xsec in xsecs], dtype=float)
+    chords = np.asarray([float(xsec.chord) for xsec in xsecs], dtype=float)
+    span_fraction = float(span_fraction)
+    point = np.asarray(
+        [
+            np.interp(span_fraction, stations, points[:, axis])
+            for axis in range(3)
+        ],
+        dtype=float,
+    )
+    chord = float(np.interp(span_fraction, stations, chords))
+    return point, chord
+
+
+def _resolve_anchor_point(anchor: SurfaceAnchorConfig, built_wings: dict[str, asb.Wing]) -> np.ndarray:
+    """Resolve one anchored-surface endpoint into a body-frame point."""
+    wing = built_wings.get(anchor.surface_id)
+    if wing is None:
+        raise ValueError(
+            f"Anchored surface references {anchor.surface_id!r}, but that surface has not been built yet. "
+            "Place anchor targets earlier in lifting_surfaces and avoid cyclic connector references."
+        )
+
+    leading_edge, chord = _interpolate_wing_xsec_values(wing, anchor.span_fraction)
+    if bool(getattr(wing, "symmetric", False)) and anchor.side == "left":
+        leading_edge = np.asarray([leading_edge[0], -leading_edge[1], leading_edge[2]], dtype=float)
+    point = leading_edge + np.asarray([float(chord) * anchor.chord_fraction, 0.0, 0.0], dtype=float)
+    point += np.asarray([float(anchor.dx), float(anchor.dy), float(anchor.dz)], dtype=float)
+    return point
+
+
 def _build_horizontal_surface(surface: LiftingSurfaceConfig) -> asb.Wing:
     """Build one horizontal lifting surface from the canonical config."""
     span, area, symmetric = _horizontal_build_inputs(surface)
@@ -89,6 +164,64 @@ def _build_horizontal_surface(surface: LiftingSurfaceConfig) -> asb.Wing:
     )
     wing.name = surface.component_id
     return wing
+
+
+def _build_anchored_surface(surface: LiftingSurfaceConfig, built_wings: dict[str, asb.Wing]) -> asb.Wing:
+    """Build one literal surface whose root and tip leading edges are anchored."""
+    if surface.root_anchor is None or surface.tip_anchor is None:
+        raise ValueError(f"Anchored surface {surface.component_id!r} is missing root or tip anchor.")
+
+    root_point = _resolve_anchor_point(surface.root_anchor, built_wings)
+    tip_point = _resolve_anchor_point(surface.tip_anchor, built_wings)
+    span_vector = tip_point - root_point
+    span = float(np.linalg.norm(span_vector))
+    if span <= 1e-9:
+        raise ValueError(f"Anchored surface {surface.component_id!r} has coincident root and tip anchors.")
+
+    solve = _chords_from_area_or_taper(
+        span=span,
+        n_sections=int(surface.n_sections),
+        area=float(surface.area),
+        taper=float(surface.taper),
+    )
+    eta = _anchored_eta(surface)
+    chord_base_eta = np.linspace(0.0, 1.0, int(surface.n_sections))
+    chords = np.interp(eta, chord_base_eta, np.asarray(solve.chords, dtype=float))
+    twist = np.interp(
+        eta,
+        np.asarray([0.0, 1.0], dtype=float),
+        np.asarray([float(surface.twist_root_deg), float(surface.twist_tip_deg)], dtype=float),
+    )
+    airfoils = _airfoil_blend_array(
+        _as_airfoil(surface.root_airfoil),
+        _as_airfoil(surface.tip_airfoil),
+        len(eta),
+    )
+    control_specs = _control_surface_specs(surface)
+
+    xsecs = []
+    for index, eta_value in enumerate(eta):
+        xyz_le = root_point + float(eta_value) * span_vector
+        xsecs.append(
+            asb.WingXSec(
+                xyz_le=xyz_le,
+                chord=float(chords[index]),
+                twist=float(twist[index]),
+                airfoil=airfoils[index],
+                control_surfaces=_control_surfaces_at_eta(control_specs, float(eta_value)),
+            )
+        )
+
+    return asb.Wing(
+        name=surface.component_id,
+        xyz_le=[0.0, 0.0, 0.0],
+        symmetric=False,
+        xsecs=xsecs,
+        n_chordwise=surface.n_chordwise,
+        chordwise_spacing=surface.chordwise_spacing,
+        n_spanwise=surface.n_spanwise,
+        spanwise_spacing=surface.spanwise_spacing,
+    )
 
 
 def _build_single_vertical_surface(
@@ -144,8 +277,10 @@ def _build_vertical_surface_group(surface: LiftingSurfaceConfig) -> list[asb.Win
     return [right_surface, left_surface]
 
 
-def _build_surface_group(surface: LiftingSurfaceConfig) -> list[asb.Wing]:
+def _build_surface_group(surface: LiftingSurfaceConfig, built_wings: dict[str, asb.Wing]) -> list[asb.Wing]:
     """Return the built wing components emitted by one lifting-surface config."""
+    if surface.geometry_mode == "anchored_le":
+        return [_build_anchored_surface(surface, built_wings)]
     if surface.orientation == "horizontal":
         return [_build_horizontal_surface(surface)]
     return _build_vertical_surface_group(surface)
@@ -158,8 +293,14 @@ def build_aircraft(definition: AircraftDefinition) -> asb.Airplane:
     downstream tools can target surfaces deterministically.
     """
     wings: list[asb.Wing] = []
+    built_wings: dict[str, asb.Wing] = {}
     for surface in definition.lifting_surfaces:
-        wings.extend(_build_surface_group(surface))
+        surface_wings = _build_surface_group(surface, built_wings)
+        for wing in surface_wings:
+            if wing.name in built_wings:
+                raise ValueError(f"Built surface IDs must be unique; duplicate {wing.name!r}.")
+            built_wings[str(wing.name)] = wing
+        wings.extend(surface_wings)
 
     fuselages: list[asb.Fuselage] = []
     if definition.fuselage.enabled:

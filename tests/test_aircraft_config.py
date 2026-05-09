@@ -11,6 +11,7 @@ from ac_design_toolbox import (
     AircraftDefinition,
     ControlSurfaceConfig,
     LiftingSurfaceConfig,
+    SurfaceAnchorConfig,
     build_aircraft,
     collect_component_ids,
     default_main_wing_surface,
@@ -230,6 +231,127 @@ class AircraftConfigTests(unittest.TestCase):
         airplane = build_aircraft(definition)
         wing_names = [wing.name for wing in airplane.wings]
         self.assertEqual(wing_names, ["main_wing", "canard", "vertical_tail_right", "vertical_tail_left"])
+
+    def test_anchored_joined_wing_connectors_round_trip_and_build(self) -> None:
+        """Anchored connector surfaces should serialize and build as ordinary wings."""
+        upper_wing = _surface_with_updates(
+            component_id="upper_wing",
+            role="wing",
+            orientation="horizontal",
+            symmetric=True,
+            span=1.2,
+            area=0.12,
+            x_le=0.55,
+            y_le=0.0,
+            z_le=0.35,
+            dihedral_deg=0.0,
+        )
+        right_connector = _surface_with_updates(
+            component_id="joined_connector_right",
+            role="other",
+            orientation="vertical",
+            geometry_mode="anchored_le",
+            symmetric=False,
+            span=0.4,
+            area=0.035,
+            taper=0.75,
+            root_airfoil="naca0010",
+            tip_airfoil="naca0010",
+            root_anchor=SurfaceAnchorConfig(
+                surface_id="main_wing",
+                side="right",
+                span_fraction=1.0,
+                chord_fraction=0.0,
+            ),
+            tip_anchor=SurfaceAnchorConfig(
+                surface_id="upper_wing",
+                side="right",
+                span_fraction=1.0,
+                chord_fraction=0.0,
+            ),
+        )
+        left_connector = _surface_with_updates(
+            component_id="joined_connector_left",
+            role="other",
+            orientation="vertical",
+            geometry_mode="anchored_le",
+            symmetric=False,
+            span=0.4,
+            area=0.035,
+            taper=0.75,
+            root_airfoil="naca0010",
+            tip_airfoil="naca0010",
+            root_anchor=SurfaceAnchorConfig(
+                surface_id="main_wing",
+                side="left",
+                span_fraction=1.0,
+                chord_fraction=0.0,
+            ),
+            tip_anchor=SurfaceAnchorConfig(
+                surface_id="upper_wing",
+                side="left",
+                span_fraction=1.0,
+                chord_fraction=0.0,
+            ),
+        )
+        definition = AircraftDefinition(
+            name="Joined Wing",
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                upper_wing,
+                right_connector,
+                left_connector,
+            ],
+        )
+
+        round_tripped = AircraftDefinition.from_json(definition.to_json())
+        self.assertEqual(round_tripped.to_dict(), definition.to_dict())
+
+        airplane = build_aircraft(round_tripped)
+        wing_lookup = {wing.name: wing for wing in airplane.wings}
+        self.assertEqual(
+            list(wing_lookup),
+            ["main_wing", "upper_wing", "joined_connector_right", "joined_connector_left"],
+        )
+        self.assertGreater(float(wing_lookup["joined_connector_right"].xsecs[0].xyz_le[1]), 0.0)
+        self.assertLess(float(wing_lookup["joined_connector_left"].xsecs[0].xyz_le[1]), 0.0)
+        self.assertFalse(bool(wing_lookup["joined_connector_right"].symmetric))
+
+    def test_anchored_connectors_reject_unresolved_or_degenerate_anchors(self) -> None:
+        """Connector anchors should fail clearly when they cannot produce AVL-safe geometry."""
+        unresolved = AircraftDefinition(
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                _surface_with_updates(
+                    component_id="bad_connector",
+                    role="other",
+                    orientation="vertical",
+                    geometry_mode="anchored_le",
+                    symmetric=False,
+                    root_anchor=SurfaceAnchorConfig(surface_id="missing_surface"),
+                    tip_anchor=SurfaceAnchorConfig(surface_id="main_wing"),
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "has not been built"):
+            build_aircraft(unresolved)
+
+        degenerate = AircraftDefinition(
+            lifting_surfaces=[
+                default_main_wing_surface(),
+                _surface_with_updates(
+                    component_id="zero_connector",
+                    role="other",
+                    orientation="vertical",
+                    geometry_mode="anchored_le",
+                    symmetric=False,
+                    root_anchor=SurfaceAnchorConfig(surface_id="main_wing"),
+                    tip_anchor=SurfaceAnchorConfig(surface_id="main_wing"),
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "coincident"):
+            build_aircraft(degenerate)
 
     def test_collect_component_ids_expands_symmetric_vertical_pairs(self) -> None:
         """Symmetric vertical or canted surfaces should expose mirrored build IDs."""

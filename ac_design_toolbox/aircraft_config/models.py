@@ -28,6 +28,7 @@ SURFACE_ROLES = (
     "other",
 )
 SURFACE_ORIENTATIONS = ("horizontal", "vertical")
+SURFACE_GEOMETRY_MODES = ("direct", "anchored_le")
 _LEGACY_SCHEMA_KEYS = ("main_wing", "tail_assembly")
 
 
@@ -178,6 +179,76 @@ class ReferenceGeometryConfig:
 
 
 @dataclass
+class SurfaceAnchorConfig:
+    """Attachment point for an anchored lifting surface.
+
+    The anchor is resolved on an already built wing-like component. Fractions
+    use the same root-to-tip span convention and leading-to-trailing chord
+    convention as the AeroSandbox wing sections. Offsets are body-frame meters.
+    """
+
+    surface_id: str = "main_wing"
+    side: str = "right"
+    span_fraction: float = 1.0
+    chord_fraction: float = 0.0
+    dx: QuantityInput = 0.0
+    dy: QuantityInput = 0.0
+    dz: QuantityInput = 0.0
+
+    def __post_init__(self) -> None:
+        """Normalize anchor values into canonical computational units."""
+        self.surface_id = _coerce_required_string("surface_id", self.surface_id)
+        self.side = _coerce_required_string("side", self.side).lower()
+        if self.side not in {"right", "left"}:
+            raise ValueError("SurfaceAnchorConfig.side must be 'right' or 'left'.")
+        self.span_fraction = _coerce_fraction("span_fraction", self.span_fraction)
+        self.chord_fraction = _coerce_fraction("chord_fraction", self.chord_fraction)
+        self.dx = coerce_quantity("dx", self.dx, "m", "length")
+        self.dy = coerce_quantity("dy", self.dy, "m", "length")
+        self.dz = coerce_quantity("dz", self.dz, "m", "length")
+
+    def mirrored(self) -> "SurfaceAnchorConfig":
+        """Return this anchor mirrored across the aircraft centerline."""
+        return SurfaceAnchorConfig(
+            surface_id=self.surface_id,
+            side="left" if self.side == "right" else "right",
+            span_fraction=self.span_fraction,
+            chord_fraction=self.chord_fraction,
+            dx=self.dx,
+            dy=-self.dy,
+            dz=self.dz,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the anchor to a plain dictionary."""
+        return {
+            "surface_id": self.surface_id,
+            "side": self.side,
+            "span_fraction": self.span_fraction,
+            "chord_fraction": self.chord_fraction,
+            "dx": self.dx,
+            "dy": self.dy,
+            "dz": self.dz,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "SurfaceAnchorConfig":
+        """Build an anchor from a plain dictionary."""
+        if isinstance(data, SurfaceAnchorConfig):
+            return data
+        data = dict(data or {})
+        return cls(
+            surface_id=data.get("surface_id", "main_wing"),
+            side=data.get("side", "right"),
+            span_fraction=data.get("span_fraction", 1.0),
+            chord_fraction=data.get("chord_fraction", 0.0),
+            dx=data.get("dx", data.get("dx_m", 0.0)),
+            dy=data.get("dy", data.get("dy_m", 0.0)),
+            dz=data.get("dz", data.get("dz_m", 0.0)),
+        )
+
+
+@dataclass
 class LiftingSurfaceConfig:
     """Canonical lifting-surface geometry definition.
 
@@ -197,6 +268,7 @@ class LiftingSurfaceConfig:
     component_id: str = "main_wing"
     role: str = "main_wing"
     orientation: str = "horizontal"
+    geometry_mode: str = "direct"
     symmetric: bool = True
     span: QuantityInput = 1.8288
     area: QuantityInput = 0.41806368
@@ -216,6 +288,8 @@ class LiftingSurfaceConfig:
     chordwise_spacing: str = "cosine"
     spanwise_spacing: str = "cosine"
     control_surfaces: list[ControlSurfaceConfig] = field(default_factory=list)
+    root_anchor: SurfaceAnchorConfig | None = None
+    tip_anchor: SurfaceAnchorConfig | None = None
 
     def __post_init__(self) -> None:
         """Normalize the surface geometry into canonical computational units."""
@@ -228,6 +302,12 @@ class LiftingSurfaceConfig:
         if self.orientation not in SURFACE_ORIENTATIONS:
             raise ValueError(
                 f"orientation must be one of {SURFACE_ORIENTATIONS}, got {self.orientation!r}."
+            )
+
+        self.geometry_mode = _coerce_required_string("geometry_mode", self.geometry_mode)
+        if self.geometry_mode not in SURFACE_GEOMETRY_MODES:
+            raise ValueError(
+                f"geometry_mode must be one of {SURFACE_GEOMETRY_MODES}, got {self.geometry_mode!r}."
             )
 
         self.symmetric = bool(self.symmetric)
@@ -250,6 +330,20 @@ class LiftingSurfaceConfig:
             control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
             for control in self.control_surfaces
         ]
+        self.root_anchor = (
+            None
+            if self.root_anchor is None
+            else self.root_anchor
+            if isinstance(self.root_anchor, SurfaceAnchorConfig)
+            else SurfaceAnchorConfig.from_dict(self.root_anchor)
+        )
+        self.tip_anchor = (
+            None
+            if self.tip_anchor is None
+            else self.tip_anchor
+            if isinstance(self.tip_anchor, SurfaceAnchorConfig)
+            else SurfaceAnchorConfig.from_dict(self.tip_anchor)
+        )
 
         if self.span <= 0.0:
             raise ValueError("span must be positive.")
@@ -266,6 +360,11 @@ class LiftingSurfaceConfig:
             raise ValueError(f"{self.role} surfaces must use horizontal orientation.")
         if self.role in {"vertical_tail", "canted_tail"} and self.orientation != "vertical":
             raise ValueError(f"{self.role} surfaces must use vertical orientation.")
+        if self.geometry_mode == "anchored_le":
+            if self.symmetric:
+                raise ValueError("anchored_le surfaces must be literal, non-symmetric surfaces.")
+            if self.root_anchor is None or self.tip_anchor is None:
+                raise ValueError("anchored_le surfaces require both root_anchor and tip_anchor.")
 
     def built_component_ids(self) -> list[str]:
         """Return the stable component IDs emitted by the geometry builder."""
@@ -279,6 +378,7 @@ class LiftingSurfaceConfig:
             "component_id": self.component_id,
             "role": self.role,
             "orientation": self.orientation,
+            "geometry_mode": self.geometry_mode,
             "symmetric": self.symmetric,
             "span": self.span,
             "area": self.area,
@@ -298,6 +398,8 @@ class LiftingSurfaceConfig:
             "chordwise_spacing": self.chordwise_spacing,
             "spanwise_spacing": self.spanwise_spacing,
             "control_surfaces": [control.to_dict() for control in self.control_surfaces],
+            "root_anchor": None if self.root_anchor is None else self.root_anchor.to_dict(),
+            "tip_anchor": None if self.tip_anchor is None else self.tip_anchor.to_dict(),
         }
 
     @classmethod
@@ -307,6 +409,7 @@ class LiftingSurfaceConfig:
             component_id=data.get("component_id", "lifting_surface"),
             role=data.get("role", "other"),
             orientation=data.get("orientation", "horizontal"),
+            geometry_mode=data.get("geometry_mode", "direct"),
             symmetric=data.get("symmetric", True),
             span=data.get("span", 1.0),
             area=data.get("area", 0.1),
@@ -329,6 +432,16 @@ class LiftingSurfaceConfig:
                 control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
                 for control in data.get("control_surfaces", [])
             ],
+            root_anchor=(
+                None
+                if data.get("root_anchor") is None
+                else SurfaceAnchorConfig.from_dict(data.get("root_anchor"))
+            ),
+            tip_anchor=(
+                None
+                if data.get("tip_anchor") is None
+                else SurfaceAnchorConfig.from_dict(data.get("tip_anchor"))
+            ),
         )
 
 
@@ -696,8 +809,10 @@ __all__ = [
     "LiftingSurfaceConfig",
     "ReferenceGeometryConfig",
     "SCHEMA_VERSION",
+    "SURFACE_GEOMETRY_MODES",
     "SURFACE_ORIENTATIONS",
     "SURFACE_ROLES",
+    "SurfaceAnchorConfig",
     "default_horizontal_tail_surface",
     "default_lifting_surfaces",
     "default_main_wing_surface",

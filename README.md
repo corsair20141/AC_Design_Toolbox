@@ -154,6 +154,7 @@ The public interface is centered on:
 
 - `AircraftDefinition`
 - `ControlSurfaceConfig`
+- `SurfaceAnchorConfig`
 - `LiftingSurfaceConfig`
 - `DesignVariableSpec`
 - `build_aircraft(...)`
@@ -166,6 +167,8 @@ The public interface is centered on:
 - stable component IDs for buildable lifting surfaces, including mirrored right/left IDs for symmetric vertical surfaces
 - optional control-surface records on each lifting surface, stored as
   `lifting_surfaces[*].control_surfaces`
+- optional anchored-surface endpoints for joined-wing and box-wing-style
+  connector geometry, stored as `root_anchor` and `tip_anchor`
 - optimizer-facing variable metadata through `design_variables`
 - extension data under `extensions`
 
@@ -182,6 +185,10 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
   - `canard`
   - `other`
 - `LiftingSurfaceConfig.orientation` is either `horizontal` or `vertical`.
+- `LiftingSurfaceConfig.geometry_mode` is either:
+  - `direct`, the legacy/default planform placement mode
+  - `anchored_le`, where root and tip leading-edge endpoints are resolved from
+    exact `SurfaceAnchorConfig` points on previously built surfaces
 - Exactly one `role="main_wing"` surface is required.
 - Tail surfaces are optional, so tailless aircraft are valid.
 - Symmetry is explicit metadata:
@@ -193,6 +200,9 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
   emits them as AeroSandbox `ControlSurface` objects for AVL/performance
   workflows, while the rendering helpers draw undeflected hinge and panel
   overlays in Plotly and three-view outputs.
+- Anchored connector surfaces are literal non-symmetric surfaces. Their anchors
+  are authoritative, so the builder rejects unresolved targets, cyclic build
+  order, and coincident endpoints before producing AeroSandbox geometry for AVL.
 
 The aircraft-config package also exposes public first-pass sizing helpers for
 external tools that need to stay aligned with the canonical geometry math:
