@@ -1,0 +1,3 @@
+catalog_id,name,efficiency,resistance_value,resistance_unit,max_current_value,max_current_unit,max_voltage_value,max_voltage_unit,notes
+example_80a_esc,Example 80 A ESC,0.97,0.01,ohm,80,A,25.2,V,Fictional example row for editing.
+example_40a_esc,Example 40 A ESC,0.95,0.015,ohm,40,A,18,V,Fictional smaller ESC example.

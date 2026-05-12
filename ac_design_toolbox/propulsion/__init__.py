@@ -1,6 +1,14 @@
 """Electric propulsion models and motor-prop operating-point solvers."""
 
 from ac_design_toolbox.propulsion.battery import BatteryOperatingPoint, BatteryPack
+from ac_design_toolbox.propulsion.catalogs import (
+    DEFAULT_CATALOG_ROOT,
+    PropulsionCatalogs,
+    load_battery_catalog,
+    load_esc_catalog,
+    load_motor_catalog,
+    load_propulsion_catalogs,
+)
 from ac_design_toolbox.propulsion.data import (
     PropellerTableSet,
     infer_diameter_from_name,
@@ -31,6 +39,7 @@ __all__ = [
     "BatteryOperatingPoint",
     "BatteryPack",
     "CoefficientPropeller",
+    "DEFAULT_CATALOG_ROOT",
     "ElectricMotor",
     "ElectronicSpeedController",
     "EscOperatingPoint",
@@ -38,6 +47,7 @@ __all__ = [
     "PropellerModel",
     "PropellerTableSet",
     "PropellerOperatingPoint",
+    "PropulsionCatalogs",
     "PropulsionOperatingPoint",
     "QuantityInput",
     "TabulatedPropeller",
@@ -45,6 +55,10 @@ __all__ = [
     "infer_diameter_from_name",
     "load_apc_performance_file",
     "load_apc_table_for_rpm",
+    "load_battery_catalog",
+    "load_esc_catalog",
+    "load_motor_catalog",
+    "load_propulsion_catalogs",
     "load_uiuc_performance_file",
     "load_uiuc_table_set",
     "normalize_unit",

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from math import isfinite
+from math import atan, degrees, isfinite, radians, tan
 from typing import Any
 
 from ac_design_toolbox.mission.units import QuantityInput, coerce_quantity
@@ -28,7 +28,7 @@ SURFACE_ROLES = (
     "other",
 )
 SURFACE_ORIENTATIONS = ("horizontal", "vertical")
-SURFACE_GEOMETRY_MODES = ("direct", "anchored_le")
+SURFACE_GEOMETRY_MODES = ("direct", "stationed", "anchored_le")
 _LEGACY_SCHEMA_KEYS = ("main_wing", "tail_assembly")
 
 
@@ -249,6 +249,95 @@ class SurfaceAnchorConfig:
 
 
 @dataclass
+class LiftingSurfaceStationConfig:
+    """One segment end station for a multi-station direct lifting surface.
+
+    The root station is stored on ``LiftingSurfaceConfig`` through ``x_le``,
+    ``y_le``, ``z_le``, ``root_chord``, ``twist_root_deg``, and
+    ``root_airfoil``. Each station record advances from the previous station
+    by a positive projected span. Sweep drives the X advance, dihedral or cant
+    drives the secondary vertical/lateral advance, and either ``chord`` or
+    ``taper`` sets the end-station chord.
+    """
+
+    span: QuantityInput = 0.5
+    sweep_le_deg: QuantityInput = 0.0
+    dihedral_deg: QuantityInput = 0.0
+    taper: float | None = 1.0
+    chord: QuantityInput | None = None
+    twist_deg: QuantityInput = 0.0
+    airfoil: str = "naca0010"
+
+    def __post_init__(self) -> None:
+        """Normalize the station segment into canonical computational units."""
+        self.span = coerce_quantity("station span", self.span, "m", "length")
+        if self.span <= 0.0:
+            raise ValueError("station span must be positive.")
+        self.sweep_le_deg = coerce_quantity(
+            "station sweep_le_deg",
+            self.sweep_le_deg,
+            "deg",
+            "angle",
+        )
+        self.dihedral_deg = coerce_quantity(
+            "station dihedral_deg",
+            self.dihedral_deg,
+            "deg",
+            "angle",
+        )
+        self.twist_deg = coerce_quantity("station twist_deg", self.twist_deg, "deg", "angle")
+        self.airfoil = _coerce_required_string("station airfoil", self.airfoil)
+
+        if self.chord in (None, ""):
+            self.chord = None
+        else:
+            self.chord = coerce_quantity("station chord", self.chord, "m", "length")
+            if self.chord <= 0.0:
+                raise ValueError("station chord must be positive when provided.")
+
+        if self.taper in (None, ""):
+            self.taper = None
+        else:
+            self.taper = _coerce_positive_float("station taper", self.taper)
+
+        if self.chord is None and self.taper is None:
+            raise ValueError("station segments require either chord or taper.")
+
+    def end_chord(self, previous_chord: float) -> float:
+        """Return this station's end chord from the previous station chord."""
+        if self.chord is not None:
+            return float(self.chord)
+        return float(previous_chord) * float(self.taper)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the station segment to a plain dictionary."""
+        return {
+            "span": self.span,
+            "sweep_le_deg": self.sweep_le_deg,
+            "dihedral_deg": self.dihedral_deg,
+            "taper": self.taper,
+            "chord": self.chord,
+            "twist_deg": self.twist_deg,
+            "airfoil": self.airfoil,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LiftingSurfaceStationConfig":
+        """Build a station segment from a plain dictionary."""
+        if isinstance(data, LiftingSurfaceStationConfig):
+            return data
+        return cls(
+            span=data.get("span", data.get("span_m", 0.5)),
+            sweep_le_deg=data.get("sweep_le_deg", 0.0),
+            dihedral_deg=data.get("dihedral_deg", 0.0),
+            taper=data.get("taper", 1.0),
+            chord=data.get("chord", data.get("chord_m")),
+            twist_deg=data.get("twist_deg", 0.0),
+            airfoil=data.get("airfoil", "naca0010"),
+        )
+
+
+@dataclass
 class LiftingSurfaceConfig:
     """Canonical lifting-surface geometry definition.
 
@@ -273,6 +362,7 @@ class LiftingSurfaceConfig:
     span: QuantityInput = 1.8288
     area: QuantityInput = 0.41806368
     taper: float = 0.65
+    root_chord: QuantityInput | None = None
     sweep_le_deg: QuantityInput = 0.0
     dihedral_deg: QuantityInput = 7.0
     x_le: QuantityInput = 0.2286
@@ -288,6 +378,7 @@ class LiftingSurfaceConfig:
     chordwise_spacing: str = "cosine"
     spanwise_spacing: str = "cosine"
     control_surfaces: list[ControlSurfaceConfig] = field(default_factory=list)
+    stations: list[LiftingSurfaceStationConfig] = field(default_factory=list)
     root_anchor: SurfaceAnchorConfig | None = None
     tip_anchor: SurfaceAnchorConfig | None = None
 
@@ -314,6 +405,12 @@ class LiftingSurfaceConfig:
         self.span = coerce_quantity("span", self.span, "m", "length")
         self.area = coerce_quantity("area", self.area, "m2", "area")
         self.taper = _coerce_positive_float("taper", self.taper)
+        if self.root_chord in (None, ""):
+            self.root_chord = None
+        else:
+            self.root_chord = coerce_quantity("root_chord", self.root_chord, "m", "length")
+            if self.root_chord <= 0.0:
+                raise ValueError("root_chord must be positive when provided.")
         self.sweep_le_deg = coerce_quantity("sweep_le_deg", self.sweep_le_deg, "deg", "angle")
         self.dihedral_deg = coerce_quantity("dihedral_deg", self.dihedral_deg, "deg", "angle")
         self.x_le = coerce_quantity("x_le", self.x_le, "m", "length")
@@ -329,6 +426,10 @@ class LiftingSurfaceConfig:
         self.control_surfaces = [
             control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
             for control in self.control_surfaces
+        ]
+        self.stations = [
+            station if isinstance(station, LiftingSurfaceStationConfig) else LiftingSurfaceStationConfig.from_dict(station)
+            for station in self.stations
         ]
         self.root_anchor = (
             None
@@ -365,6 +466,54 @@ class LiftingSurfaceConfig:
                 raise ValueError("anchored_le surfaces must be literal, non-symmetric surfaces.")
             if self.root_anchor is None or self.tip_anchor is None:
                 raise ValueError("anchored_le surfaces require both root_anchor and tip_anchor.")
+            if self.stations:
+                raise ValueError("anchored_le surfaces do not support station segments.")
+        if self.geometry_mode == "stationed":
+            if self.root_anchor is not None or self.tip_anchor is not None:
+                raise ValueError("stationed surfaces cannot use root_anchor or tip_anchor.")
+            if not self.stations:
+                raise ValueError("stationed surfaces require at least one station segment.")
+            self._apply_station_summary()
+
+    def _root_chord_value(self) -> float:
+        """Return the root chord used for station-mode geometry."""
+        if self.root_chord is not None:
+            return float(self.root_chord)
+        return float(2.0 * self.area / (self.span * (1.0 + self.taper)))
+
+    def _apply_station_summary(self) -> None:
+        """Derive whole-surface planform summaries from station segments."""
+        root_chord = self._root_chord_value()
+        projected_span = 0.0
+        literal_area = 0.0
+        total_x = 0.0
+        total_secondary = 0.0
+        previous_chord = root_chord
+        for station in self.stations:
+            segment_span = float(station.span)
+            next_chord = station.end_chord(previous_chord)
+            projected_span += segment_span
+            literal_area += 0.5 * segment_span * (previous_chord + next_chord)
+            total_x += segment_span * tan(radians(float(station.sweep_le_deg)))
+            total_secondary += segment_span * tan(radians(float(station.dihedral_deg)))
+            previous_chord = next_chord
+
+        if projected_span <= 0.0:
+            raise ValueError("stationed surfaces require positive total station span.")
+        if literal_area <= 0.0:
+            raise ValueError("stationed surfaces require positive derived area.")
+
+        mirrored_horizontal = self.orientation == "horizontal" and self.symmetric
+        area_factor = 2.0 if mirrored_horizontal else 1.0
+        span_factor = 2.0 if mirrored_horizontal else 1.0
+        self.span = float(span_factor * projected_span)
+        self.area = float(area_factor * literal_area)
+        self.taper = float(previous_chord / root_chord)
+        self.sweep_le_deg = float(degrees(atan(total_x / projected_span)))
+        self.dihedral_deg = float(degrees(atan(total_secondary / projected_span)))
+        self.twist_tip_deg = float(self.stations[-1].twist_deg)
+        self.tip_airfoil = str(self.stations[-1].airfoil)
+        self.n_sections = max(int(self.n_sections), len(self.stations) + 1)
 
     def built_component_ids(self) -> list[str]:
         """Return the stable component IDs emitted by the geometry builder."""
@@ -383,6 +532,7 @@ class LiftingSurfaceConfig:
             "span": self.span,
             "area": self.area,
             "taper": self.taper,
+            "root_chord": self.root_chord,
             "sweep_le_deg": self.sweep_le_deg,
             "dihedral_deg": self.dihedral_deg,
             "x_le": self.x_le,
@@ -398,6 +548,7 @@ class LiftingSurfaceConfig:
             "chordwise_spacing": self.chordwise_spacing,
             "spanwise_spacing": self.spanwise_spacing,
             "control_surfaces": [control.to_dict() for control in self.control_surfaces],
+            "stations": [station.to_dict() for station in self.stations],
             "root_anchor": None if self.root_anchor is None else self.root_anchor.to_dict(),
             "tip_anchor": None if self.tip_anchor is None else self.tip_anchor.to_dict(),
         }
@@ -414,6 +565,7 @@ class LiftingSurfaceConfig:
             span=data.get("span", 1.0),
             area=data.get("area", 0.1),
             taper=data.get("taper", 0.8),
+            root_chord=data.get("root_chord"),
             sweep_le_deg=data.get("sweep_le_deg", 0.0),
             dihedral_deg=data.get("dihedral_deg", 0.0),
             x_le=data.get("x_le", 0.0),
@@ -431,6 +583,10 @@ class LiftingSurfaceConfig:
             control_surfaces=[
                 control if isinstance(control, ControlSurfaceConfig) else ControlSurfaceConfig.from_dict(control)
                 for control in data.get("control_surfaces", [])
+            ],
+            stations=[
+                station if isinstance(station, LiftingSurfaceStationConfig) else LiftingSurfaceStationConfig.from_dict(station)
+                for station in data.get("stations", [])
             ],
             root_anchor=(
                 None
@@ -807,6 +963,7 @@ __all__ = [
     "DesignVariableSpec",
     "FuselageConfig",
     "LiftingSurfaceConfig",
+    "LiftingSurfaceStationConfig",
     "ReferenceGeometryConfig",
     "SCHEMA_VERSION",
     "SURFACE_GEOMETRY_MODES",

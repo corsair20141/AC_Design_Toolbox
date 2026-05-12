@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from math import radians, tan
 
 import aerosandbox as asb
 import aerosandbox.numpy as np
@@ -166,6 +167,86 @@ def _build_horizontal_surface(surface: LiftingSurfaceConfig) -> asb.Wing:
     return wing
 
 
+def _station_root_chord(surface: LiftingSurfaceConfig) -> float:
+    """Return the root chord used by a station-mode surface."""
+    if surface.root_chord is not None:
+        return float(surface.root_chord)
+    return float(2.0 * surface.area / (surface.span * (1.0 + surface.taper)))
+
+
+def _station_eta_values(surface: LiftingSurfaceConfig) -> list[float]:
+    """Return normalized end-station fractions for a station-mode surface."""
+    spans = [float(station.span) for station in surface.stations]
+    total_span = float(sum(spans))
+    if total_span <= 0.0:
+        raise ValueError(f"Stationed surface {surface.component_id!r} has no positive span.")
+    cumulative = 0.0
+    eta = [0.0]
+    for span in spans:
+        cumulative += span
+        eta.append(float(cumulative / total_span))
+    return eta
+
+
+def _build_stationed_surface(
+    surface: LiftingSurfaceConfig,
+    *,
+    name: str,
+    y_le: float | None = None,
+) -> asb.Wing:
+    """Build one direct surface from explicit station segments."""
+    if not surface.stations:
+        raise ValueError(f"Stationed surface {surface.component_id!r} requires station segments.")
+
+    root_airfoil = _as_airfoil(surface.root_airfoil)
+    root_chord = _station_root_chord(surface)
+    root_y = float(surface.y_le if y_le is None else y_le)
+    current_xyz = np.asarray([float(surface.x_le), root_y, float(surface.z_le)], dtype=float)
+    current_chord = root_chord
+    eta_values = _station_eta_values(surface)
+    control_specs = _control_surface_specs(surface)
+    xsecs = [
+        asb.WingXSec(
+            xyz_le=current_xyz.copy(),
+            chord=float(current_chord),
+            twist=float(surface.twist_root_deg),
+            airfoil=root_airfoil,
+            control_surfaces=_control_surfaces_at_eta(control_specs, eta_values[0]),
+        )
+    ]
+
+    for index, station in enumerate(surface.stations, start=1):
+        segment_span = float(station.span)
+        sweep_dx = segment_span * tan(radians(float(station.sweep_le_deg)))
+        secondary = segment_span * tan(radians(float(station.dihedral_deg)))
+        if surface.orientation == "vertical":
+            delta = np.asarray([sweep_dx, secondary, segment_span], dtype=float)
+        else:
+            delta = np.asarray([sweep_dx, segment_span, secondary], dtype=float)
+        current_xyz = current_xyz + delta
+        current_chord = station.end_chord(current_chord)
+        xsecs.append(
+            asb.WingXSec(
+                xyz_le=current_xyz.copy(),
+                chord=float(current_chord),
+                twist=float(station.twist_deg),
+                airfoil=_as_airfoil(station.airfoil),
+                control_surfaces=_control_surfaces_at_eta(control_specs, eta_values[index]),
+            )
+        )
+
+    return asb.Wing(
+        name=name,
+        xyz_le=[0.0, 0.0, 0.0],
+        symmetric=bool(surface.symmetric and surface.orientation == "horizontal"),
+        xsecs=xsecs,
+        n_chordwise=surface.n_chordwise,
+        chordwise_spacing=surface.chordwise_spacing,
+        n_spanwise=surface.n_spanwise,
+        spanwise_spacing=surface.spanwise_spacing,
+    )
+
+
 def _build_anchored_surface(surface: LiftingSurfaceConfig, built_wings: dict[str, asb.Wing]) -> asb.Wing:
     """Build one literal surface whose root and tip leading edges are anchored."""
     if surface.root_anchor is None or surface.tip_anchor is None:
@@ -260,6 +341,14 @@ def _build_single_vertical_surface(
 def _build_vertical_surface_group(surface: LiftingSurfaceConfig) -> list[asb.Wing]:
     """Build one or two vertical-orientation components from one surface config."""
     if not surface.symmetric:
+        if surface.geometry_mode == "stationed":
+            return [
+                _build_stationed_surface(
+                    surface,
+                    name=surface.component_id,
+                    y_le=float(surface.y_le),
+                )
+            ]
         return [
             _build_single_vertical_surface(
                 surface,
@@ -267,6 +356,15 @@ def _build_vertical_surface_group(surface: LiftingSurfaceConfig) -> list[asb.Win
                 y_le=float(surface.y_le),
             )
         ]
+
+    if surface.geometry_mode == "stationed":
+        right_surface = _build_stationed_surface(
+            surface,
+            name=f"{surface.component_id}_right",
+            y_le=abs(float(surface.y_le)),
+        )
+        left_surface = _mirror_wing_about_xz(right_surface, name=f"{surface.component_id}_left")
+        return [right_surface, left_surface]
 
     right_surface = _build_single_vertical_surface(
         surface,
@@ -281,6 +379,8 @@ def _build_surface_group(surface: LiftingSurfaceConfig, built_wings: dict[str, a
     """Return the built wing components emitted by one lifting-surface config."""
     if surface.geometry_mode == "anchored_le":
         return [_build_anchored_surface(surface, built_wings)]
+    if surface.geometry_mode == "stationed" and surface.orientation == "horizontal":
+        return [_build_stationed_surface(surface, name=surface.component_id)]
     if surface.orientation == "horizontal":
         return [_build_horizontal_surface(surface)]
     return _build_vertical_surface_group(surface)

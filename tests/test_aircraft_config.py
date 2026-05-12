@@ -11,6 +11,7 @@ from ac_design_toolbox import (
     AircraftDefinition,
     ControlSurfaceConfig,
     LiftingSurfaceConfig,
+    LiftingSurfaceStationConfig,
     SurfaceAnchorConfig,
     build_aircraft,
     collect_component_ids,
@@ -27,6 +28,39 @@ def _surface_with_updates(**updates) -> LiftingSurfaceConfig:
     surface = default_main_wing_surface().to_dict()
     surface.update(updates)
     return LiftingSurfaceConfig.from_dict(surface)
+
+
+def _stationed_main_wing() -> LiftingSurfaceConfig:
+    """Return a main wing with two explicit station segments."""
+    return _surface_with_updates(
+        geometry_mode="stationed",
+        span=2.0,
+        area=0.6,
+        taper=0.5,
+        root_chord=0.5,
+        sweep_le_deg=0.0,
+        dihedral_deg=0.0,
+        twist_root_deg=1.0,
+        root_airfoil="naca4412",
+        stations=[
+            LiftingSurfaceStationConfig(
+                span=0.6,
+                sweep_le_deg=10.0,
+                dihedral_deg=3.0,
+                taper=0.8,
+                twist_deg=0.0,
+                airfoil="naca4412",
+            ),
+            LiftingSurfaceStationConfig(
+                span=0.4,
+                sweep_le_deg=-5.0,
+                dihedral_deg=6.0,
+                chord=0.25,
+                twist_deg=-2.0,
+                airfoil="naca0012",
+            ),
+        ],
+    )
 
 
 def _max_trace_coordinate(figure) -> float:
@@ -78,6 +112,50 @@ class AircraftConfigTests(unittest.TestCase):
         round_tripped = AircraftDefinition.from_json(definition.to_json())
         self.assertEqual(round_tripped.to_dict(), definition.to_dict())
         self.assertEqual(collect_component_ids(round_tripped), ["main_wing", "center_strake"])
+
+    def test_stationed_surface_round_trip_and_derives_planform_summary(self) -> None:
+        """Station-mode surfaces should store segments and derive summary scalars."""
+        surface = _stationed_main_wing()
+        definition = AircraftDefinition(lifting_surfaces=[surface])
+
+        round_tripped = AircraftDefinition.from_json(definition.to_json())
+
+        self.assertEqual(round_tripped.to_dict(), definition.to_dict())
+        main_wing = round_tripped.main_wing_surface()
+        self.assertEqual(main_wing.geometry_mode, "stationed")
+        self.assertEqual(len(main_wing.stations), 2)
+        self.assertAlmostEqual(float(main_wing.span), 2.0)
+        self.assertAlmostEqual(float(main_wing.area), 0.8)
+        self.assertAlmostEqual(float(main_wing.taper), 0.5)
+
+    def test_stationed_surface_builds_expected_aerosandbox_xsecs(self) -> None:
+        """Sweep drives X advance and dihedral drives Z advance in station mode."""
+        surface = _stationed_main_wing()
+        airplane = build_aircraft(AircraftDefinition(lifting_surfaces=[surface]))
+        wing = airplane.wings[0]
+
+        self.assertTrue(wing.symmetric)
+        self.assertEqual(len(wing.xsecs), 3)
+        self.assertAlmostEqual(float(wing.xsecs[0].chord), 0.5)
+        self.assertAlmostEqual(float(wing.xsecs[1].chord), 0.4)
+        self.assertAlmostEqual(float(wing.xsecs[2].chord), 0.25)
+        self.assertAlmostEqual(float(wing.xsecs[1].xyz_le[1]), 0.6)
+        self.assertAlmostEqual(float(wing.xsecs[2].xyz_le[1]), 1.0)
+        self.assertGreater(float(wing.xsecs[1].xyz_le[0]), float(wing.xsecs[0].xyz_le[0]))
+        self.assertLess(float(wing.xsecs[2].xyz_le[0]), float(wing.xsecs[1].xyz_le[0]))
+        self.assertGreater(float(wing.xsecs[1].xyz_le[2]), float(wing.xsecs[0].xyz_le[2]))
+        self.assertGreater(float(wing.xsecs[2].xyz_le[2]), float(wing.xsecs[1].xyz_le[2]))
+
+    def test_stationed_surface_rejects_invalid_segments(self) -> None:
+        """Station-mode validation should fail before bad geometry reaches ASB."""
+        with self.assertRaisesRegex(ValueError, "station span must be positive"):
+            LiftingSurfaceStationConfig(span=0.0)
+
+        with self.assertRaisesRegex(ValueError, "either chord or taper"):
+            LiftingSurfaceStationConfig(span=0.2, taper=None, chord=None)
+
+        with self.assertRaisesRegex(ValueError, "require at least one station"):
+            _surface_with_updates(geometry_mode="stationed", stations=[])
 
     def test_control_surfaces_round_trip_and_build_into_geometry(self) -> None:
         """Canonical control surfaces should serialize and build into AeroSandbox xsecs."""

@@ -187,6 +187,9 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
 - `LiftingSurfaceConfig.orientation` is either `horizontal` or `vertical`.
 - `LiftingSurfaceConfig.geometry_mode` is either:
   - `direct`, the legacy/default planform placement mode
+  - `stationed`, where direct-surface station segments drive span, sweep,
+    dihedral/cant, chord, twist, and airfoil while whole-surface span/area/taper
+    remain derived summaries
   - `anchored_le`, where root and tip leading-edge endpoints are resolved from
     exact `SurfaceAnchorConfig` points on previously built surfaces
 - Exactly one `role="main_wing"` surface is required.
@@ -200,6 +203,10 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
   emits them as AeroSandbox `ControlSurface` objects for AVL/performance
   workflows, while the rendering helpers draw undeflected hinge and panel
   overlays in Plotly and three-view outputs.
+- Stationed direct surfaces store their root station on `LiftingSurfaceConfig`
+  and their subsequent segment end stations in `stations:
+  list[LiftingSurfaceStationConfig]`. AeroSandbox output is still an ordinary
+  `Wing` with explicit XSecs.
 - Anchored connector surfaces are literal non-symmetric surfaces. Their anchors
   are authoritative, so the builder rejects unresolved targets, cyclic build
   order, and coincident endpoints before producing AeroSandbox geometry for AVL.
@@ -481,6 +488,24 @@ example.
 
 For third-party propeller data downloads and local layout guidance, see
 [`data/propellers/README.md`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/data/propellers/README.md).
+
+Editable motor, battery, and ESC catalogs live under
+[`data/propulsion/catalogs`](/C:/Users/corsa/OneDrive%20-%20The%20University%20of%20Alabama/_PhD/99%20CODES/01%20Aero/AC_Design_Toolbox/data/propulsion/catalogs).
+These CSV files are meant to be edited directly by users and then loaded with:
+
+```python
+from ac_design_toolbox.propulsion import load_propulsion_catalogs
+
+catalogs = load_propulsion_catalogs()
+motor = catalogs.motors["example_920kv_outrunner"]
+battery = catalogs.batteries["example_4s_lipo"]
+esc = catalogs.escs["example_80a_esc"]
+```
+
+The committed catalog rows are fictional examples, not validated product
+recommendations. Propeller catalogs are intentionally not duplicated there;
+use the APC/UIUC loaders and files under `data/propellers/` for propeller
+coefficient data.
 
 ## Example
 
