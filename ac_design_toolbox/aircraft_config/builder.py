@@ -175,7 +175,7 @@ def _station_root_chord(surface: LiftingSurfaceConfig) -> float:
 
 
 def _station_eta_values(surface: LiftingSurfaceConfig) -> list[float]:
-    """Return normalized end-station fractions for a station-mode surface."""
+    """Return station fractions augmented with exact control-surface edges."""
     spans = [float(station.span) for station in surface.stations]
     total_span = float(sum(spans))
     if total_span <= 0.0:
@@ -185,7 +185,73 @@ def _station_eta_values(surface: LiftingSurfaceConfig) -> list[float]:
     for span in spans:
         cumulative += span
         eta.append(float(cumulative / total_span))
-    return eta
+
+    for control in _control_surface_specs(surface):
+        span_fraction = control.get("span_fraction")
+        if span_fraction is None or len(span_fraction) != 2:
+            continue
+        start, end = float(span_fraction[0]), float(span_fraction[1])
+        if 0.0 < start < 1.0:
+            eta.append(start)
+        if 0.0 < end < 1.0:
+            eta.append(end)
+    return [float(value) for value in np.unique(np.round(np.asarray(eta, dtype=float), 12))]
+
+
+def _station_profile_values(
+    surface: LiftingSurfaceConfig,
+    *,
+    y_le: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[asb.Airfoil]]:
+    """Return station-mode section values at the user-defined station breaks."""
+    root_y = float(surface.y_le if y_le is None else y_le)
+    current_xyz = np.asarray([float(surface.x_le), root_y, float(surface.z_le)], dtype=float)
+    current_chord = _station_root_chord(surface)
+    current_span = 0.0
+
+    spans = [float(station.span) for station in surface.stations]
+    total_span = float(sum(spans))
+    eta_values = [0.0]
+    points = [current_xyz.copy()]
+    chords = [float(current_chord)]
+    twists = [float(surface.twist_root_deg)]
+    airfoils = [_as_airfoil(surface.root_airfoil)]
+
+    for station, segment_span in zip(surface.stations, spans):
+        sweep_dx = segment_span * tan(radians(float(station.sweep_le_deg)))
+        secondary = segment_span * tan(radians(float(station.dihedral_deg)))
+        if surface.orientation == "vertical":
+            delta = np.asarray([sweep_dx, secondary, segment_span], dtype=float)
+        else:
+            delta = np.asarray([sweep_dx, segment_span, secondary], dtype=float)
+        current_xyz = current_xyz + delta
+        current_chord = station.end_chord(current_chord)
+        current_span += segment_span
+
+        eta_values.append(float(current_span / total_span))
+        points.append(current_xyz.copy())
+        chords.append(float(current_chord))
+        twists.append(float(station.twist_deg))
+        airfoils.append(_as_airfoil(station.airfoil))
+
+    return (
+        np.asarray(eta_values, dtype=float),
+        np.asarray(points, dtype=float),
+        np.asarray(chords, dtype=float),
+        np.asarray(twists, dtype=float),
+        airfoils,
+    )
+
+
+def _station_airfoil_at_eta(base_eta: np.ndarray, airfoils: list[asb.Airfoil], eta: float) -> asb.Airfoil:
+    """Return the station airfoil assigned to one possibly augmented station."""
+    eta = float(eta)
+    for index, base_value in enumerate(base_eta):
+        if abs(float(base_value) - eta) <= 1e-12:
+            return airfoils[index]
+    outboard_index = int(np.searchsorted(base_eta, eta, side="right"))
+    inboard_index = max(min(outboard_index - 1, len(airfoils) - 1), 0)
+    return airfoils[inboard_index]
 
 
 def _build_stationed_surface(
@@ -198,40 +264,26 @@ def _build_stationed_surface(
     if not surface.stations:
         raise ValueError(f"Stationed surface {surface.component_id!r} requires station segments.")
 
-    root_airfoil = _as_airfoil(surface.root_airfoil)
-    root_chord = _station_root_chord(surface)
-    root_y = float(surface.y_le if y_le is None else y_le)
-    current_xyz = np.asarray([float(surface.x_le), root_y, float(surface.z_le)], dtype=float)
-    current_chord = root_chord
+    base_eta, base_points, base_chords, base_twists, base_airfoils = _station_profile_values(surface, y_le=y_le)
     eta_values = _station_eta_values(surface)
     control_specs = _control_surface_specs(surface)
-    xsecs = [
-        asb.WingXSec(
-            xyz_le=current_xyz.copy(),
-            chord=float(current_chord),
-            twist=float(surface.twist_root_deg),
-            airfoil=root_airfoil,
-            control_surfaces=_control_surfaces_at_eta(control_specs, eta_values[0]),
-        )
-    ]
 
-    for index, station in enumerate(surface.stations, start=1):
-        segment_span = float(station.span)
-        sweep_dx = segment_span * tan(radians(float(station.sweep_le_deg)))
-        secondary = segment_span * tan(radians(float(station.dihedral_deg)))
-        if surface.orientation == "vertical":
-            delta = np.asarray([sweep_dx, secondary, segment_span], dtype=float)
-        else:
-            delta = np.asarray([sweep_dx, segment_span, secondary], dtype=float)
-        current_xyz = current_xyz + delta
-        current_chord = station.end_chord(current_chord)
+    xsecs = []
+    for eta in eta_values:
+        xyz_le = np.asarray(
+            [
+                np.interp(float(eta), base_eta, base_points[:, axis])
+                for axis in range(3)
+            ],
+            dtype=float,
+        )
         xsecs.append(
             asb.WingXSec(
-                xyz_le=current_xyz.copy(),
-                chord=float(current_chord),
-                twist=float(station.twist_deg),
-                airfoil=_as_airfoil(station.airfoil),
-                control_surfaces=_control_surfaces_at_eta(control_specs, eta_values[index]),
+                xyz_le=xyz_le,
+                chord=float(np.interp(float(eta), base_eta, base_chords)),
+                twist=float(np.interp(float(eta), base_eta, base_twists)),
+                airfoil=_station_airfoil_at_eta(base_eta, base_airfoils, float(eta)),
+                control_surfaces=_control_surfaces_at_eta(control_specs, float(eta)),
             )
         )
 

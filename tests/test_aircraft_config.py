@@ -146,6 +146,41 @@ class AircraftConfigTests(unittest.TestCase):
         self.assertGreater(float(wing.xsecs[1].xyz_le[2]), float(wing.xsecs[0].xyz_le[2]))
         self.assertGreater(float(wing.xsecs[2].xyz_le[2]), float(wing.xsecs[1].xyz_le[2]))
 
+    def test_stationed_surface_inserts_control_break_xsecs(self) -> None:
+        """Station-mode controls should create AVL-visible section breaks."""
+        surface_data = _stationed_main_wing().to_dict()
+        surface_data["control_surfaces"] = [
+            ControlSurfaceConfig(
+                name="aileron",
+                span_start_fraction=0.65,
+                span_end_fraction=0.95,
+                hinge_point=0.75,
+                symmetric=True,
+            ).to_dict()
+        ]
+        surface = LiftingSurfaceConfig.from_dict(surface_data)
+
+        airplane = build_aircraft(AircraftDefinition(lifting_surfaces=[surface]))
+        wing = airplane.wings[0]
+
+        self.assertEqual(len(wing.xsecs), 5)
+        control_xsecs = [
+            xsec
+            for xsec in wing.xsecs
+            if any(control.name == "aileron" for control in getattr(xsec, "control_surfaces", []))
+        ]
+        self.assertEqual(len(control_xsecs), 2)
+        self.assertAlmostEqual(float(control_xsecs[0].xyz_le[1]), 0.65)
+        self.assertAlmostEqual(float(control_xsecs[1].xyz_le[1]), 0.95)
+
+        panels = aircraft_rendering._control_surface_panels(airplane)
+        self.assertTrue(
+            any(
+                panel["surface_name"] == "main_wing" and panel["control_name"] == "aileron"
+                for panel in panels
+            )
+        )
+
     def test_stationed_surface_rejects_invalid_segments(self) -> None:
         """Station-mode validation should fail before bad geometry reaches ASB."""
         with self.assertRaisesRegex(ValueError, "station span must be positive"):
