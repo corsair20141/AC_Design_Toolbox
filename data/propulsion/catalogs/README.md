@@ -20,6 +20,9 @@ propeller database loaders documented in `data/propellers/README.md`.
 - Leave optional value/unit cells blank when the value is unknown.
 - If a value has a unit, put the number in `*_value` and the unit in the
   adjacent `*_unit` column.
+- Optional `mass_value` / `mass_unit` columns describe reusable component mass.
+  Aircraft-specific component locations belong in the aircraft W&B workflow,
+  not in these catalogs.
 - Bare unitless columns such as `gear_ratio`, `gear_efficiency`, `soc`, and
   `efficiency` are fractions or scalar multipliers.
 - The supported units are the same units accepted by

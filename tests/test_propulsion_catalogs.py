@@ -36,8 +36,10 @@ class PropulsionCatalogTests(unittest.TestCase):
         self.assertIsInstance(catalogs.batteries["example_4s_lipo"], BatteryPack)
         self.assertIsInstance(catalogs.escs["example_80a_esc"], ElectronicSpeedController)
         self.assertAlmostEqual(catalogs.motors["example_920kv_outrunner"].max_current or 0.0, 60.0)
+        self.assertAlmostEqual(catalogs.motors["example_920kv_outrunner"].mass or 0.0, 0.16)
         self.assertAlmostEqual(catalogs.batteries["example_4s_lipo"].mass_kg or 0.0, 0.62)
         self.assertAlmostEqual(catalogs.escs["example_80a_esc"].efficiency, 0.97)
+        self.assertAlmostEqual(catalogs.escs["example_80a_esc"].mass or 0.0, 0.085)
 
     def test_blank_optional_cells_become_none_or_defaults(self) -> None:
         """Blank optional cells should not create bogus zero-valued limits."""
@@ -46,8 +48,8 @@ class PropulsionCatalogTests(unittest.TestCase):
             motor_path.write_text(
                 "catalog_id,name,kv_value,kv_unit,resistance_value,resistance_unit,"
                 "no_load_current_value,no_load_current_unit,max_current_value,max_current_unit,"
-                "max_voltage_value,max_voltage_unit,max_power_value,max_power_unit,gear_ratio,gear_efficiency\n"
-                "minimal,Minimal Motor,900,rpm/V,0.1,ohm,,,,,,,,,\n",
+                "max_voltage_value,max_voltage_unit,max_power_value,max_power_unit,mass_value,mass_unit,gear_ratio,gear_efficiency\n"
+                "minimal,Minimal Motor,900,rpm/V,0.1,ohm,,,,,,,,,,,,\n",
                 encoding="utf-8",
             )
 
@@ -56,6 +58,7 @@ class PropulsionCatalogTests(unittest.TestCase):
         self.assertIsNone(motor.max_current)
         self.assertIsNone(motor.max_voltage)
         self.assertIsNone(motor.max_power)
+        self.assertIsNone(motor.mass)
         self.assertAlmostEqual(motor.no_load_current, 0.0)
         self.assertAlmostEqual(motor.gear_ratio, 1.0)
         self.assertAlmostEqual(motor.gear_efficiency, 1.0)

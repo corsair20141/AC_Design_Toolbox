@@ -147,6 +147,7 @@ def _load_motor_row(row: Mapping[str, str | None], path: Path, row_number: int) 
         max_current=_quantity(row, "max_current", path=path, row_number=row_number, required=False),
         max_voltage=_quantity(row, "max_voltage", path=path, row_number=row_number, required=False),
         max_power=_quantity(row, "max_power", path=path, row_number=row_number, required=False),
+        mass=_quantity(row, "mass", path=path, row_number=row_number, required=False),
         gear_ratio=gear_ratio if gear_ratio is not None else 1.0,
         gear_efficiency=gear_efficiency if gear_efficiency is not None else 1.0,
     )
@@ -187,6 +188,7 @@ def _load_esc_row(
         resistance=resistance if resistance is not None else 0.0,
         max_current=_quantity(row, "max_current", path=path, row_number=row_number, required=False),
         max_voltage=_quantity(row, "max_voltage", path=path, row_number=row_number, required=False),
+        mass=_quantity(row, "mass", path=path, row_number=row_number, required=False),
     )
     return component_id, esc
 

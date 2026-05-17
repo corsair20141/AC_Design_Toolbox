@@ -139,6 +139,7 @@ class CoefficientPropeller:
     ct: float
     cp: float | None = None
     cq: float | None = None
+    mass: QuantityInput | None = None
     name: str = ""
 
     def __post_init__(self) -> None:
@@ -164,6 +165,10 @@ class CoefficientPropeller:
         if cq is None and cp is not None:
             cq = cp / (2.0 * pi)
 
+        mass = coerce_quantity("mass", self.mass, "kg", "mass") if self.mass is not None else None
+        if mass is not None and mass <= 0.0:
+            raise ValueError("mass must be positive when provided.")
+        object.__setattr__(self, "mass", mass)
         object.__setattr__(self, "cp", cp)
         object.__setattr__(self, "cq", cq)
         object.__setattr__(self, "name", str(self.name))
@@ -205,6 +210,7 @@ class TabulatedPropeller:
     ct: tuple[float, ...]
     cp: tuple[float, ...]
     extrapolation_mode: str = "raise"
+    mass: QuantityInput | None = None
     name: str = ""
     source: str = ""
 
@@ -238,6 +244,10 @@ class TabulatedPropeller:
         if mode not in {"raise", "clip", "linear"}:
             raise ValueError("extrapolation_mode must be 'raise', 'clip', or 'linear'.")
 
+        mass = coerce_quantity("mass", self.mass, "kg", "mass") if self.mass is not None else None
+        if mass is not None and mass <= 0.0:
+            raise ValueError("mass must be positive when provided.")
+        object.__setattr__(self, "mass", mass)
         object.__setattr__(self, "advance_ratio", tuple(float(value) for value in advance_ratio))
         object.__setattr__(self, "ct", tuple(float(value) for value in ct))
         object.__setattr__(self, "cp", tuple(float(value) for value in cp))
@@ -254,6 +264,7 @@ class TabulatedPropeller:
         ct: list[float] | tuple[float, ...],
         cp: list[float] | tuple[float, ...],
         extrapolation_mode: str = "raise",
+        mass: QuantityInput | None = None,
         name: str = "",
         source: str = "",
     ) -> "TabulatedPropeller":
@@ -264,6 +275,7 @@ class TabulatedPropeller:
             ct=tuple(ct),
             cp=tuple(cp),
             extrapolation_mode=extrapolation_mode,
+            mass=mass,
             name=name,
             source=source,
         )
@@ -278,6 +290,7 @@ class TabulatedPropeller:
         ct_column: str = "ct",
         cp_column: str = "cp",
         extrapolation_mode: str = "raise",
+        mass: QuantityInput | None = None,
         name: str = "",
         source: str = "",
     ) -> "TabulatedPropeller":
@@ -288,6 +301,7 @@ class TabulatedPropeller:
             ct=list(data[ct_column]),
             cp=list(data[cp_column]),
             extrapolation_mode=extrapolation_mode,
+            mass=mass,
             name=name,
             source=source,
         )

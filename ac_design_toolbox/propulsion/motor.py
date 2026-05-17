@@ -44,7 +44,8 @@ class ElectricMotor:
     Public dimensional inputs accept bare scalars in the stored computational
     unit or ``(value, "unit")`` pairs. After normalization this dataclass
     stores ``kv`` as rad/s/V, resistance as ohm, currents as A, voltage as V,
-    power as W, and gear ratio as motor speed divided by output-shaft speed.
+    power as W, optional mass as kg, and gear ratio as motor speed divided by
+    output-shaft speed.
 
     The equations follow the transparent Drela/Ning first-order model:
     back EMF is proportional to angular speed, torque is proportional to
@@ -59,6 +60,7 @@ class ElectricMotor:
     max_current: QuantityInput | None = None
     max_voltage: QuantityInput | None = None
     max_power: QuantityInput | None = None
+    mass: QuantityInput | None = None
     gear_ratio: float = 1.0
     gear_efficiency: float = 1.0
     name: str = ""
@@ -94,6 +96,11 @@ class ElectricMotor:
         if max_power is not None and max_power <= 0.0:
             raise ValueError("max_power must be positive when provided.")
         object.__setattr__(self, "max_power", max_power)
+
+        mass = coerce_optional_quantity("mass", self.mass, "kg", "mass")
+        if mass is not None and mass <= 0.0:
+            raise ValueError("mass must be positive when provided.")
+        object.__setattr__(self, "mass", mass)
 
         gear_ratio = require_finite_scalar("gear_ratio", self.gear_ratio)
         if gear_ratio <= 0.0:

@@ -45,6 +45,7 @@ class ElectronicSpeedController:
     resistance: QuantityInput = 0.0
     max_current: QuantityInput | None = None
     max_voltage: QuantityInput | None = None
+    mass: QuantityInput | None = None
     name: str = ""
 
     def __post_init__(self) -> None:
@@ -68,6 +69,11 @@ class ElectronicSpeedController:
         if max_voltage is not None and max_voltage <= 0.0:
             raise ValueError("max_voltage must be positive when provided.")
         object.__setattr__(self, "max_voltage", max_voltage)
+
+        mass = coerce_optional_quantity("mass", self.mass, "kg", "mass")
+        if mass is not None and mass <= 0.0:
+            raise ValueError("mass must be positive when provided.")
+        object.__setattr__(self, "mass", mass)
         object.__setattr__(self, "name", str(self.name))
 
     def motor_voltage(self, input_voltage: QuantityInput, current: QuantityInput, throttle: float = 1.0) -> float:

@@ -162,6 +162,7 @@ def parse_uiuc_performance_text(
     name: str = "",
     source: str = "",
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
 ) -> TabulatedPropeller:
     """Parse one UIUC wind-tunnel ``J CT CP eta`` text table.
 
@@ -191,6 +192,7 @@ def parse_uiuc_performance_text(
         ct=ct,
         cp=cp,
         extrapolation_mode=extrapolation_mode,
+        mass=mass,
         name=name,
         source=source,
     )
@@ -201,6 +203,7 @@ def load_uiuc_performance_file(
     *,
     diameter: QuantityInput | None = None,
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
     name: str = "",
 ) -> TabulatedPropeller:
     """Load one UIUC ``J CT CP eta`` file as a ``TabulatedPropeller``."""
@@ -212,6 +215,7 @@ def load_uiuc_performance_file(
         name=name or Path(source).stem,
         source=source,
         extrapolation_mode=extrapolation_mode,
+        mass=mass,
     )
 
 
@@ -220,6 +224,7 @@ def load_uiuc_table_set(
     *,
     diameter: QuantityInput | None = None,
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
     name: str = "",
 ) -> PropellerTableSet:
     """Load multiple UIUC run files for one propeller into an RPM table set."""
@@ -244,6 +249,7 @@ def load_uiuc_table_set(
         tables_by_rpm[rpm] = parse_uiuc_performance_text(
             text,
             diameter=diameter_m,
+            mass=mass,
             name=f"{name or Path(source).stem} @ {rpm:g} rpm",
             source=source,
             extrapolation_mode=extrapolation_mode,
@@ -296,6 +302,7 @@ def parse_apc_performance_text(
     *,
     diameter: QuantityInput,
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
     name: str = "",
     source: str = "",
 ) -> PropellerTableSet:
@@ -309,6 +316,7 @@ def parse_apc_performance_text(
             ct=ct,
             cp=cp,
             extrapolation_mode=extrapolation_mode,
+            mass=mass,
             name=f"{name or 'APC propeller'} @ {rpm:g} rpm",
             source=source,
         )
@@ -332,6 +340,7 @@ def load_apc_performance_file(
     *,
     diameter: QuantityInput | None = None,
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
     name: str = "",
 ) -> PropellerTableSet:
     """Load an APC PER3 performance file as a set of RPM-indexed tables."""
@@ -341,6 +350,7 @@ def load_apc_performance_file(
         text,
         diameter=diameter_m,
         extrapolation_mode=extrapolation_mode,
+        mass=mass,
         name=name or Path(source).stem,
         source=source,
     )
@@ -353,6 +363,7 @@ def load_apc_table_for_rpm(
     diameter: QuantityInput | None = None,
     nearest: bool = False,
     extrapolation_mode: str = "raise",
+    mass: QuantityInput | None = None,
     name: str = "",
 ) -> TabulatedPropeller:
     """Load one APC table at an exact or nearest RPM from a PER3 file."""
@@ -360,6 +371,7 @@ def load_apc_table_for_rpm(
         path,
         diameter=diameter,
         extrapolation_mode=extrapolation_mode,
+        mass=mass,
         name=name,
     )
     return table_set.table_for_rpm(rpm, nearest=nearest)
