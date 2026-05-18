@@ -60,6 +60,9 @@ The new preferred import path is the `ac_design_toolbox` package:
   - higher-level convenience API for common geometry + AVL workflows
 - `ac_design_toolbox.avl.legacy_single_case`
   - preserved older single-case AVL path when that workflow is still useful
+- `ac_design_toolbox.apps.avl`
+  - reusable Dash app/page for AVL geometry export, operating-point runs, trim
+    runs, captured logs, parsed results, and case-bundle downloads
 
 Small private helpers still exist where they reduce duplication cleanly:
 
@@ -100,6 +103,19 @@ For programmatic AVL workflows:
 ```python
 from ac_design_toolbox.api import AVLCaseConfig, prepare_avl_airplane, run_case
 ```
+
+For the standalone AVL Dash app:
+
+```powershell
+python examples\run_avl_app.py
+```
+
+The standalone app requires an uploaded `AircraftDefinition` JSON before export
+or run actions. External host apps can embed `create_avl_page(...)` and provide
+that same canonical JSON directly. The AVL page can also receive a host display
+unit token; labels and editable numeric values follow that display system while
+the app converts values back to ACDT's canonical AVL/API units before export or
+execution.
 
 For air-relative mission-performance queries:
 

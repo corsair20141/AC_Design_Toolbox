@@ -12,7 +12,9 @@ import numpy as np
 
 # Force a non-interactive backend before importing pyplot so command-line runs
 # do not emit GUI-backend warnings in headless or terminal-only environments.
-matplotlib.use("Agg")
+# NOTE 2026-05-18: Commented out bc this was causing issues when running scripts in Spyder where we need inline plotting
+# Not even sure what this was for...
+# matplotlib.use("Agg")
 
 from matplotlib.collections import PolyCollection
 from matplotlib.ticker import FuncFormatter

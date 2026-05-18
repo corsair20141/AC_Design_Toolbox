@@ -1,4 +1,5 @@
-catalog_id,name,kv_value,kv_unit,resistance_value,resistance_unit,no_load_current_value,no_load_current_unit,max_current_value,max_current_unit,max_voltage_value,max_voltage_unit,max_power_value,max_power_unit,mass_value,mass_unit,gear_ratio,gear_efficiency,notes
-example_920kv_outrunner,Example 920 Kv Outrunner,920,rpm/V,0.09,ohm,0.7,A,60,A,25.2,V,850,W,0.16,kg,1.0,1.0,Fictional example row for editing.
-example_geared_motor,Example Geared Motor,1100,rpm/V,0.12,ohm,0.5,A,35,A,18,V,450,W,0.21,kg,2.5,0.92,Fictional example with a gearbox.
-test,test,1,rpm/v,1,ohm,1,a,1,a,1,v,1,w,1,kg,1,1,
+catalog_id,name,kv_value,kv_unit,resistance_value,resistance_unit,no_load_current_value,no_load_current_unit,max_current_value,max_current_unit,max_voltage_value,max_voltage_unit,max_power_value,max_power_unit,mass_value,mass_unit,gear_ratio,gear_efficiency,notes,max_continuous_power_value,max_continuous_power_unit,max_burst_power_value,max_burst_power_unit
+example_920kv_outrunner,Example 920 Kv Outrunner,920,rpm/V,0.09,ohm,0.7,A,60,A,25.2,V,850,W,0.16,kg,1.0,1.0,Fictional example row for editing.,,,,
+example_geared_motor,Example Geared Motor,1100,rpm/V,0.12,ohm,0.5,A,35,A,18,V,450,W,0.21,kg,2.5,0.92,Fictional example with a gearbox.,,,,
+test,test,1,rpm/v,1,ohm,1,a,1,a,1,v,1,w,1,kg,1,1,,,,,
+Strecker_260.20,RS-E Strecker 260.20,470,rpm/v,0.02,ohm,2.1,a,,,,,220,w,0.181437,kg,1,1,,220,w,420,w
