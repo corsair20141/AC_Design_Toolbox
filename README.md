@@ -223,6 +223,10 @@ The canonical aircraft schema is now a hard-break explicit surface-list model:
   and their subsequent segment end stations in `stations:
   list[LiftingSurfaceStationConfig]`. AeroSandbox output is still an ordinary
   `Wing` with explicit XSecs.
+- `generate_equal_span_stations_from_planform(...)` converts a solved direct
+  trapezoidal surface into editable station rows. Its `n_sections` argument is
+  the total physical section count including root and tip, so it returns
+  `n_sections - 1` segment-end station records.
 - Anchored connector surfaces are literal non-symmetric surfaces. Their anchors
   are authoritative, so the builder rejects unresolved targets, cyclic build
   order, and coincident endpoints before producing AeroSandbox geometry for AVL.
@@ -231,6 +235,7 @@ The aircraft-config package also exposes public first-pass sizing helpers for
 external tools that need to stay aligned with the canonical geometry math:
 
 - `solve_planform(...)`
+- `generate_equal_span_stations_from_planform(...)`
 - `planform_quarter_chord_x(...)`
 - `solve_horizontal_tail_area_from_volume_coefficient(...)`
 - `solve_vertical_tail_area_from_volume_coefficient(...)`

@@ -18,6 +18,7 @@ from ac_design_toolbox import (
     collect_component_ids,
     default_main_wing_surface,
     design_variable_records,
+    generate_equal_span_stations_from_planform,
     render_aircraft_plotly,
     render_aircraft_three_view_image,
 )
@@ -221,6 +222,61 @@ class AircraftConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "require at least one station"):
             _surface_with_updates(geometry_mode="stationed", stations=[])
+
+    def test_equal_span_station_generation_matches_symmetric_planform(self) -> None:
+        """Auto-generated station rows should preserve full mirrored wing geometry."""
+        surface = _surface_with_updates(twist_tip_deg=-2.0, tip_airfoil="naca0012")
+
+        stations = generate_equal_span_stations_from_planform(surface, n_sections=5)
+        stationed_surface = LiftingSurfaceConfig.from_dict(
+            {
+                **surface.to_dict(),
+                "geometry_mode": "stationed",
+                "stations": [station.to_dict() for station in stations],
+            }
+        )
+
+        self.assertEqual(len(stations), 4)
+        self.assertAlmostEqual(float(stationed_surface.span), float(surface.span))
+        self.assertAlmostEqual(float(stationed_surface.area), float(surface.area))
+        self.assertAlmostEqual(float(stationed_surface.taper), float(surface.taper))
+        self.assertAlmostEqual(float(stationed_surface.sweep_le_deg), float(surface.sweep_le_deg))
+        self.assertAlmostEqual(float(stationed_surface.dihedral_deg), float(surface.dihedral_deg))
+        self.assertAlmostEqual(float(stationed_surface.twist_tip_deg), -2.0)
+        self.assertEqual(stationed_surface.tip_airfoil, "naca0012")
+
+    def test_equal_span_station_generation_preserves_literal_vertical_surface(self) -> None:
+        """Vertical surfaces should keep literal span and area when stationed."""
+        surface = _surface_with_updates(
+            role="vertical_tail",
+            orientation="vertical",
+            symmetric=False,
+            span=0.8,
+            area=0.16,
+            taper=0.5,
+            sweep_le_deg=15.0,
+            dihedral_deg=0.0,
+        )
+
+        stations = generate_equal_span_stations_from_planform(surface, n_sections=4)
+        stationed_surface = LiftingSurfaceConfig.from_dict(
+            {
+                **surface.to_dict(),
+                "geometry_mode": "stationed",
+                "stations": [station.to_dict() for station in stations],
+            }
+        )
+
+        self.assertEqual(len(stations), 3)
+        self.assertAlmostEqual(float(stationed_surface.span), 0.8)
+        self.assertAlmostEqual(float(stationed_surface.area), 0.16)
+        self.assertAlmostEqual(float(stationed_surface.taper), 0.5)
+        self.assertAlmostEqual(float(stationed_surface.sweep_le_deg), 15.0)
+
+    def test_equal_span_station_generation_rejects_invalid_section_count(self) -> None:
+        """The total section count includes root and tip and must allow one segment."""
+        with self.assertRaisesRegex(ValueError, "n_sections must be >= 2"):
+            generate_equal_span_stations_from_planform(default_main_wing_surface(), n_sections=1)
 
     def test_control_surfaces_round_trip_and_build_into_geometry(self) -> None:
         """Canonical control surfaces should serialize and build into AeroSandbox xsecs."""

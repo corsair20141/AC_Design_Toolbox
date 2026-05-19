@@ -22,6 +22,7 @@ from ac_design_toolbox.aircraft_config.models import (
 from ac_design_toolbox.aircraft_config.sizing import (
     PlanformSizingResult,
     canted_pair_projected_area_factor,
+    generate_equal_span_stations_from_planform,
     mean_aerodynamic_chord_spanwise_station,
     planform_quarter_chord_x,
     solve_canted_pair_surface_area_from_horizontal_volume_coefficient,
@@ -59,6 +60,7 @@ __all__ = [
     "default_main_wing_surface",
     "default_vertical_tail_surface",
     "design_variable_records",
+    "generate_equal_span_stations_from_planform",
     "mean_aerodynamic_chord_spanwise_station",
     "planform_quarter_chord_x",
     "resolve_path_value",

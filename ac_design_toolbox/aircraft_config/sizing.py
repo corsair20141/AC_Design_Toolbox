@@ -14,6 +14,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import cos, radians, sin, tan
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ac_design_toolbox.aircraft_config.models import (
+        LiftingSurfaceConfig,
+        LiftingSurfaceStationConfig,
+    )
 
 
 @dataclass(frozen=True)
@@ -157,6 +164,60 @@ def solve_planform(
         taper=taper,
         n_sections=max(int(n_sections), 2),
     )
+
+
+def generate_equal_span_stations_from_planform(
+    surface: "LiftingSurfaceConfig",
+    *,
+    n_sections: int,
+) -> list["LiftingSurfaceStationConfig"]:
+    """Return editable equal-span station rows for a direct trapezoidal surface.
+
+    ``n_sections`` is the total physical section count, including the root and
+    tip sections. Since ACDT stores the root section on ``LiftingSurfaceConfig``,
+    the returned list contains ``n_sections - 1`` outboard segment-end rows.
+    """
+    from ac_design_toolbox.aircraft_config.models import LiftingSurfaceStationConfig
+
+    section_count = int(n_sections)
+    if section_count < 2:
+        raise ValueError("n_sections must be >= 2.")
+
+    literal_span = float(surface.span)
+    literal_area = float(surface.area)
+    if str(surface.orientation) == "horizontal" and bool(surface.symmetric):
+        # Station rows describe one semispan; ACDT's stationed summary mirrors
+        # horizontal symmetric surfaces back to full span and area.
+        literal_span *= 0.5
+        literal_area *= 0.5
+
+    metrics = solve_planform(
+        span=literal_span,
+        area=literal_area,
+        taper=float(surface.taper),
+    )
+    segment_count = section_count - 1
+    segment_span = float(metrics.span) / float(segment_count)
+
+    rows: list[LiftingSurfaceStationConfig] = []
+    for index in range(1, section_count):
+        eta = float(index) / float(segment_count)
+        chord = float(metrics.root_chord + eta * (metrics.tip_chord - metrics.root_chord))
+        twist_deg = float(surface.twist_root_deg) + eta * (
+            float(surface.twist_tip_deg) - float(surface.twist_root_deg)
+        )
+        rows.append(
+            LiftingSurfaceStationConfig(
+                span=segment_span,
+                sweep_le_deg=float(surface.sweep_le_deg),
+                dihedral_deg=float(surface.dihedral_deg),
+                taper=None,
+                chord=chord,
+                twist_deg=twist_deg,
+                airfoil=str(surface.tip_airfoil if index == segment_count else surface.root_airfoil),
+            )
+        )
+    return rows
 
 
 def mean_aerodynamic_chord_spanwise_station(*, span: float, taper: float) -> float:
@@ -319,6 +380,7 @@ def solve_twin_vertical_tail_surface_area_from_volume_coefficient(
 __all__ = [
     "PlanformSizingResult",
     "canted_pair_projected_area_factor",
+    "generate_equal_span_stations_from_planform",
     "mean_aerodynamic_chord_spanwise_station",
     "planform_quarter_chord_x",
     "solve_canted_pair_surface_area_from_horizontal_volume_coefficient",
