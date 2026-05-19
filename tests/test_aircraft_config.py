@@ -9,6 +9,7 @@ import matplotlib
 
 from ac_design_toolbox import (
     AircraftDefinition,
+    CenterOfGravityConfig,
     ControlSurfaceConfig,
     LiftingSurfaceConfig,
     LiftingSurfaceStationConfig,
@@ -87,6 +88,35 @@ class AircraftConfigTests(unittest.TestCase):
         definition = AircraftDefinition()
         round_tripped = AircraftDefinition.from_json(definition.to_json())
         self.assertEqual(round_tripped.to_dict(), definition.to_dict())
+
+    def test_center_of_gravity_is_native_and_drives_airplane_reference(self) -> None:
+        """Built AVL/AeroSandbox geometry should use native CG, not moment reference fields."""
+        definition = AircraftDefinition(
+            reference_geometry={"x_ref": 0.1, "y_ref": 0.2, "z_ref": 0.3},
+            center_of_gravity=CenterOfGravityConfig(x_cg=0.4, y_cg=0.05, z_cg=-0.02),
+        )
+
+        round_tripped = AircraftDefinition.from_json(definition.to_json())
+        airplane = build_aircraft(round_tripped)
+
+        self.assertEqual(round_tripped.center_of_gravity.as_tuple(), (0.4, 0.05, -0.02))
+        self.assertAlmostEqual(float(airplane.xyz_ref[0]), 0.4)
+        self.assertAlmostEqual(float(airplane.xyz_ref[1]), 0.05)
+        self.assertAlmostEqual(float(airplane.xyz_ref[2]), -0.02)
+
+    def test_legacy_solar_uas_cg_extension_migrates_to_native_cg(self) -> None:
+        """Older Solar_UAS aircraft JSON should hydrate CG into the native ACDT field."""
+        payload = AircraftDefinition().to_dict()
+        payload.pop("center_of_gravity", None)
+        payload["extensions"] = {
+            "solar_uas": {
+                "center_of_gravity": {"x": 0.52, "y": 0.01, "z": 0.03},
+            }
+        }
+
+        definition = AircraftDefinition.from_dict(payload)
+
+        self.assertEqual(definition.center_of_gravity.as_tuple(), (0.52, 0.01, 0.03))
 
     def test_round_trip_supports_multiple_wings_and_zero_tails(self) -> None:
         """List-based definitions should support extra wings without any tail surfaces."""

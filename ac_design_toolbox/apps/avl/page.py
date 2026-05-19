@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import zipfile
@@ -89,8 +90,15 @@ _DISPLAY_FIELD_UNITS = {
     "avl-tol-cl-input": ("CL Tolerance", None),
     "avl-tol-cm-input": ("Cm Tolerance", None),
     "avl-max-iter-input": ("Max Iterations", None),
+    "avl-sm-target-input": ("SM Target", None),
+    "avl-sm-cl-target-input": ("Target CL", None),
 }
 _DISPLAY_FIELD_IDS = tuple(_DISPLAY_FIELD_UNITS)
+_SCALAR_LABELS = {
+    "SM_target": "Target static margin",
+    "x_np": "Neutral point X [m]",
+    "x_cg": "Required CG X [m]",
+}
 
 
 def _sid(component_id: str, scope: str | None) -> str:
@@ -280,6 +288,75 @@ def _case_work_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="acdt_avl_app_"))
 
 
+def _user_output_path(value: Any) -> Path | None:
+    """Return a resolved user output path, or ``None`` for temp output.
+
+    Absolute paths are honored. Relative paths are resolved against the current
+    app working directory so AVL writes are deterministic whether the page runs
+    standalone from ACDT or embedded in a host app.
+    """
+
+    text = str(value or "").strip().strip("\"'")
+    if not text:
+        return None
+    path = Path(os.path.expandvars(text)).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve(strict=False)
+
+
+def _export_target(output_path: Path | None, default_file_name: str = "Airplane.avl") -> tuple[Path, str, Path]:
+    """Return working directory, AVL filename, and final geometry path."""
+
+    if output_path is None:
+        work_root = _case_work_root()
+        return work_root, default_file_name, work_root / default_file_name
+    if output_path.suffix.lower() == ".avl":
+        return output_path.parent, output_path.name, output_path
+    return output_path, default_file_name, output_path / default_file_name
+
+
+def _case_target(output_path: Path | None) -> Path:
+    """Return the case working directory for run workflows."""
+
+    if output_path is None:
+        return _case_work_root()
+    if output_path.suffix.lower() == ".avl":
+        return output_path.parent
+    return output_path
+
+
+def _would_overwrite_output(action: str | None, output_path: Path | None) -> bool:
+    """Return whether writing to the user path would replace existing content."""
+
+    if output_path is None:
+        return False
+    if action == "avl-export-button":
+        _, _, geom_path = _export_target(output_path)
+        return geom_path.exists()
+    case_dir = _case_target(output_path)
+    return case_dir.exists() and case_dir.is_dir() and any(case_dir.iterdir())
+
+
+def _output_target_error(action: str | None, output_path: Path | None) -> str | None:
+    """Return a user-facing error when the output path cannot be used."""
+
+    if output_path is None:
+        return None
+    if action == "avl-export-button":
+        work_root, _, geom_path = _export_target(output_path)
+        if work_root.exists() and not work_root.is_dir():
+            return f'AVL export parent path is not a directory: "{work_root}".'
+        if geom_path.exists() and not geom_path.is_file():
+            return f'AVL export target is not a file path: "{geom_path}".'
+        return None
+
+    case_dir = _case_target(output_path)
+    if case_dir.exists() and not case_dir.is_dir():
+        return f'AVL case output path is not a directory: "{case_dir}".'
+    return None
+
+
 def _json_summary_payload(result: dict[str, Any], mode: str) -> bytes:
     """Return a compact JSON summary for bundle export."""
 
@@ -327,6 +404,21 @@ def _normalized_result_payload(raw_result: dict[str, Any], *, mode: str, work_ro
     }
 
 
+def _normalized_sm_result_payload(
+    raw_result: dict[str, Any],
+    *,
+    mode: str,
+    work_root: Path,
+    sm_metadata: dict[str, float] | None,
+) -> dict[str, Any]:
+    """Normalize an SM-target result and append static-margin metadata."""
+
+    result = _normalized_result_payload(raw_result, mode=mode, work_root=work_root)
+    if sm_metadata:
+        result.setdefault("scalars", {}).update(sm_metadata)
+    return result
+
+
 def _zip_case_bundle(case_payload: dict[str, Any]) -> bytes:
     """Package known AVL result files plus a JSON summary into a ZIP archive."""
 
@@ -372,7 +464,12 @@ def _scalar_table(result_payload: dict[str, Any] | None) -> html.Div:
     rows = [
         html.Tr([html.Th("Metric"), html.Th("Value")]),
         *[
-            html.Tr([html.Td(str(key)), html.Td(f"{value:.6g}" if isinstance(value, (int, float)) else str(value))])
+            html.Tr(
+                [
+                    html.Td(_SCALAR_LABELS.get(str(key), str(key))),
+                    html.Td(f"{value:.6g}" if isinstance(value, (int, float)) else str(value)),
+                ]
+            )
             for key, value in sorted(scalars.items())
         ],
     ]
@@ -432,6 +529,12 @@ def _layout(scope: str | None, *, allow_upload: bool) -> html.Div:
 
     return html.Div(
         [
+            dcc.ConfirmDialog(
+                id=_sid("avl-overwrite-confirm", scope),
+                message="The specified output directory is not empty. Proceeding will overwrite existing files.",
+            ),
+            dcc.Store(id=_sid("avl-intended-action-store", scope)),
+            dcc.Store(id=_sid("avl-backend-log-store", scope)),
             dcc.Store(id=_sid("avl-aircraft-definition-store", scope)),
             dcc.Store(id=_sid("avl-last-result-store", scope)),
             dcc.Store(id=_sid("avl-display-unit-system-store", scope), data=DEFAULT_DISPLAY_UNIT_SYSTEM),
@@ -444,6 +547,7 @@ def _layout(scope: str | None, *, allow_upload: bool) -> html.Div:
                             upload_block,
                             _text_input("avl-exe-input", "AVL Executable", DEFAULT_AVL_EXE, scope=scope),
                             _text_input("avl-case-name-input", "Case Name", "avl_case", scope=scope),
+                            _text_input("avl-output-dir-input", "AVL Export Path / Case Directory (Optional, relative to app cwd)", "", scope=scope),
                             html.Div(
                                 [
                                     _label("Display Units"),
@@ -467,6 +571,7 @@ def _layout(scope: str | None, *, allow_upload: bool) -> html.Div:
                                         options=[
                                             {"label": "Operating Point", "value": "operating_point"},
                                             {"label": "Longitudinal Trim", "value": "trim"},
+                                            {"label": "Target Static Margin", "value": "trim_sm"},
                                         ],
                                         value="operating_point",
                                         clearable=False,
@@ -474,13 +579,34 @@ def _layout(scope: str | None, *, allow_upload: bool) -> html.Div:
                                 ],
                                 style={"display": "grid", "gap": "4px"},
                             ),
+                            html.Div(
+                                [
+                                    _label("Geometry Options"),
+                                    dcc.Checklist(
+                                        id=_sid("avl-geometry-options-checklist", scope),
+                                        options=[
+                                            {"label": " Write CDCL Blocks", "value": "write_cdcl"},
+                                            {"label": " Write Fuselage", "value": "write_fuselage"},
+                                        ],
+                                        value=[],
+                                        style={"display": "grid", "gap": "4px", "fontSize": "13px", "marginTop": "2px"},
+                                    ),
+                                ],
+                                style={"display": "grid", "gap": "4px"},
+                            ),
+                            _number_input("avl-timeout-input", _display_label("avl-timeout-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 120, scope=scope),
+                        ],
+                        style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(180px, 1fr))", "gap": "10px"},
+                    ),
+                    html.H2("Flight Conditions", style={"fontSize": "16px", "marginBottom": "8px", "marginTop": "12px"}),
+                    html.Div(
+                        [
                             _number_input("avl-velocity-input", _display_label("avl-velocity-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 20.0, scope=scope),
                             _number_input("avl-mach-input", _display_label("avl-mach-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 0.0, scope=scope),
                             _number_input("avl-altitude-input", _display_label("avl-altitude-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 0.0, scope=scope),
                             _number_input("avl-temp-shift-input", _display_label("avl-temp-shift-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 0.0, scope=scope),
-                            _number_input("avl-timeout-input", _display_label("avl-timeout-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 120, scope=scope),
                         ],
-                        style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(180px, 1fr))", "gap": "10px"},
+                        style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(150px, 1fr))", "gap": "10px"},
                     ),
                     html.Div(
                         [
@@ -527,22 +653,72 @@ def _layout(scope: str | None, *, allow_upload: bool) -> html.Div:
                     ),
                     html.Div(
                         [
+                            html.H2("Target Static Margin", style={"fontSize": "16px", "marginBottom": "8px"}),
+                            html.Div(
+                                "AVL and AeroSandbox call the moment-reference point xyz_ref. For static-margin and trim solutions, ACDT intentionally sets xyz_ref to the aircraft CG so Cm and elevator trim are evaluated about the CG. The reported Required CG X is the xyz_ref X location needed to achieve the target static margin.",
+                                style={
+                                    "fontSize": "12px",
+                                    "lineHeight": "1.35",
+                                    "color": "#57606a",
+                                    "maxWidth": "900px",
+                                },
+                            ),
+                            html.Div(
+                                [
+                                    _number_input("avl-sm-target-input", _display_label("avl-sm-target-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 0.10, scope=scope),
+                                    html.Div(
+                                        [
+                                            _label("Trim Target Type"),
+                                            dcc.Dropdown(
+                                                id=_sid("avl-sm-trim-type-dropdown", scope),
+                                                options=[
+                                                    {"label": "Target CL", "value": "cl"},
+                                                    {"label": "Target Alpha", "value": "alpha"},
+                                                ],
+                                                value="cl",
+                                                clearable=False,
+                                            ),
+                                        ],
+                                        style={"display": "grid", "gap": "4px"},
+                                    ),
+                                    html.Div(
+                                        [
+                                            _number_input("avl-sm-cl-target-input", _display_label("avl-sm-cl-target-input", DEFAULT_DISPLAY_UNIT_SYSTEM), 0.45, scope=scope),
+                                        ],
+                                        id=_sid("avl-sm-cl-target-div", scope),
+                                        style={"display": "grid"},
+                                    ),
+                                ],
+                                style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(150px, 1fr))", "gap": "10px"},
+                            ),
+                        ],
+                        id=_sid("avl-trim-sm-section", scope),
+                        style={"display": "none"},
+                    ),
+                    html.Div(
+                        [
                             html.Button("Export AVL Geometry", id=_sid("avl-export-button", scope), n_clicks=0, style=_button_style("primary")),
                             html.Button("Run Operating Point", id=_sid("avl-run-button", scope), n_clicks=0, style=_button_style("run")),
                             html.Button("Download Case Bundle", id=_sid("avl-bundle-button", scope), n_clicks=0, style=_button_style()),
                         ],
                         style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "14px"},
                     ),
-                    html.Div(id=_sid("avl-status-div", scope), children=_format_status("Upload or provide an aircraft definition to begin."), style={"marginTop": "12px"}),
-                    html.H2("Parsed Results", style={"fontSize": "16px"}),
-                    html.Div(id=_sid("avl-scalars-div", scope), children=_scalar_table(None)),
-                    html.H2("Generated Files", style={"fontSize": "16px"}),
-                    html.Div(id=_sid("avl-files-div", scope), children=_file_list(None)),
-                    html.H2("Captured Log", style={"fontSize": "16px"}),
-                    html.Pre(
-                        id=_sid("avl-log-pre", scope),
-                        children=_raw_log(None),
-                        style={"backgroundColor": "#0d1117", "color": "#c9d1d9", "padding": "12px", "overflowX": "auto", "maxHeight": "360px"},
+                    dcc.Loading(
+                        id=_sid("avl-loading", scope),
+                        type="default",
+                        children=[
+                            html.Div(id=_sid("avl-status-div", scope), children=_format_status("Upload or provide an aircraft definition to begin."), style={"marginTop": "12px"}),
+                            html.H2("Parsed Results", style={"fontSize": "16px"}),
+                            html.Div(id=_sid("avl-scalars-div", scope), children=_scalar_table(None)),
+                            html.H2("Generated Files", style={"fontSize": "16px"}),
+                            html.Div(id=_sid("avl-files-div", scope), children=_file_list(None)),
+                            html.H2("Captured Log", style={"fontSize": "16px"}),
+                            html.Pre(
+                                id=_sid("avl-log-pre", scope),
+                                children=_raw_log(None),
+                                style={"backgroundColor": "#0d1117", "color": "#c9d1d9", "padding": "12px", "overflowX": "auto", "maxHeight": "360px"},
+                            ),
+                        ]
                     ),
                 ],
                 style={"display": "grid", "gap": "12px"},
@@ -698,6 +874,12 @@ def create_avl_page(
         State(_sid("avl-tol-cl-input", id_scope), "value"),
         State(_sid("avl-tol-cm-input", id_scope), "value"),
         State(_sid("avl-max-iter-input", id_scope), "value"),
+        State(_sid("avl-geometry-options-checklist", id_scope), "value"),
+        State(_sid("avl-sm-target-input", id_scope), "value"),
+        State(_sid("avl-output-dir-input", id_scope), "value"),
+        State(_sid("avl-sm-trim-type-dropdown", id_scope), "value"),
+        State(_sid("avl-sm-cl-target-input", id_scope), "value"),
+        State(_sid("avl-intended-action-store", id_scope), "data"),
         State(_sid("avl-last-result-store", id_scope), "data"),
     ]
 
@@ -705,113 +887,253 @@ def create_avl_page(
         Output(_sid("avl-download", id_scope), "data"),
         Output(_sid("avl-last-result-store", id_scope), "data"),
         Output(_sid("avl-status-div", id_scope), "children"),
+        Output(_sid("avl-overwrite-confirm", id_scope), "displayed"),
+        Output(_sid("avl-intended-action-store", id_scope), "data"),
+        Output(_sid("avl-backend-log-store", id_scope), "data"),
         Input(_sid("avl-export-button", id_scope), "n_clicks"),
         Input(_sid("avl-run-button", id_scope), "n_clicks"),
         Input(_sid("avl-bundle-button", id_scope), "n_clicks"),
+        Input(_sid("avl-overwrite-confirm", id_scope), "submit_n_clicks"),
         export_states,
         prevent_initial_call=True,
     )
-    def handle_avl_action(export_clicks: int, run_clicks: int, bundle_clicks: int, *values: Any):
+    def handle_avl_action(export_clicks: int, run_clicks: int, bundle_clicks: int, confirm_clicks: int, *values: Any):
         """Export geometry, run AVL, or download the latest case bundle."""
 
         del export_clicks
         del run_clicks
         del bundle_clicks
+        del confirm_clicks
         triggered_id = _local_triggered_id(id_scope)
         last_result = values[-1]
+        intended_action = values[-2]
+        sm_cl_target_val = values[-3]
+        sm_trim_type = values[-4]
+        output_path = _user_output_path(values[-5])
+        sm_target_val = values[-6]
+        geometry_options = values[-7] or []
+
         if triggered_id == "avl-bundle-button":
             if not last_result:
-                return no_update, no_update, _format_status("No AVL run is available for bundle download.", is_error=True)
+                return no_update, no_update, _format_status("No AVL run is available for bundle download.", is_error=True), False, no_update, no_update
             data = _zip_case_bundle(dict(last_result))
             filename = f"{_sanitize_case_name((last_result or {}).get('case_name'))}_bundle.zip"
-            return dcc.send_bytes(data, filename), no_update, _format_status(f'Prepared "{filename}".')
+            return dcc.send_bytes(data, filename), no_update, _format_status(f'Prepared "{filename}".'), False, no_update, no_update
+
+        if triggered_id in ("avl-export-button", "avl-run-button"):
+            action = triggered_id
+        elif triggered_id == "avl-overwrite-confirm":
+            action = intended_action
+        else:
+            raise PreventUpdate
+
+        output_error = _output_target_error(action, output_path)
+        if output_error:
+            return no_update, no_update, _format_status(output_error, is_error=True), False, no_update, no_update
+
+        if triggered_id in ("avl-export-button", "avl-run-button") and _would_overwrite_output(action, output_path):
+            return no_update, no_update, no_update, True, action, no_update
 
         definition_json = values[0]
         if not definition_json:
-            return no_update, no_update, _format_status("Provide an AircraftDefinition JSON before using AVL.", is_error=True)
+            return no_update, no_update, _format_status("Provide an AircraftDefinition JSON before using AVL.", is_error=True), False, no_update, no_update
 
+        import io
+        import contextlib
+
+        log_stream = io.StringIO()
         try:
-            from ac_design_toolbox.api import AVLCaseConfig, AVLTrimConfig, prepare_avl_airplane, run_case, trim_longitudinal_case
+            with contextlib.redirect_stdout(log_stream), contextlib.redirect_stderr(log_stream):
+                from ac_design_toolbox.api import AVLCaseConfig, AVLTrimConfig, prepare_avl_airplane, run_case, trim_longitudinal_case
 
-            definition, airplane = _aircraft_from_json(str(definition_json))
-            case_name = _sanitize_case_name(values[2])
-            work_root = _case_work_root()
+                definition, airplane = _aircraft_from_json(str(definition_json))
+                case_name = _sanitize_case_name(values[2])
+                write_cdcl = "write_cdcl" in geometry_options
+                write_fuselage = "write_fuselage" in geometry_options
 
-            if triggered_id == "avl-export-button":
-                prepared = prepare_avl_airplane(airplane=airplane, working_directory=work_root, file_name="Airplane.avl")
-                geom_path = Path(prepared["geom"])
-                filename = f"{definition.name or 'aircraft'}_{case_name}.avl"
-                return (
-                    dcc.send_bytes(geom_path.read_bytes(), filename),
-                    no_update,
-                    _format_status(f'Exported AVL geometry "{filename}". Control map: {prepared.get("control_index_map", {})}'),
-                )
+                if action == "avl-export-button":
+                    work_root, avl_file_name, geom_target = _export_target(output_path)
+                    prepared = prepare_avl_airplane(airplane=airplane, working_directory=work_root, file_name=avl_file_name, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                    geom_path = Path(prepared["geom"])
+                    filename = geom_target.name if output_path is not None and geom_target.suffix.lower() == ".avl" else f"{definition.name or 'aircraft'}_{case_name}.avl"
+                    return (
+                        dcc.send_bytes(geom_path.read_bytes(), filename),
+                        no_update,
+                        _format_status(f'Exported AVL geometry to "{geom_path}". Control map: {prepared.get("control_index_map", {})}'),
+                        False,
+                        no_update,
+                        log_stream.getvalue() or no_update,
+                    )
 
-            mode = str(values[3] or "operating_point")
-            unit_system = _validate_display_unit_system(values[4])
-            avl_exe = str(values[1] or DEFAULT_AVL_EXE)
-            altitude = _canonical_float(values, 7, 0.0, unit_system, "avl-altitude-input")
-            altitude_arg = altitude if altitude > 0.0 else None
-            timeout_s = _int(values[9], 120)
-            if mode == "trim":
-                config = AVLTrimConfig(
-                    case_name=case_name,
-                    CL_target=_canonical_float(values, 21, 0.45, unit_system, "avl-cl-target-input"),
-                    velocity=_canonical_float(values, 5, 20.0, unit_system, "avl-velocity-input"),
-                    altitude=altitude_arg,
-                    temp_shift_F=_canonical_float(values, 8, 0.0, unit_system, "avl-temp-shift-input"),
-                    mach=_canonical_float(values, 6, 0.0, unit_system, "avl-mach-input"),
-                    baseline_controls={
-                        "aileron": _canonical_float(values, 17, 0.0, unit_system, "avl-aileron-input"),
-                        "elevator": _canonical_float(values, 18, 0.0, unit_system, "avl-elevator-input"),
-                        "rudder": _canonical_float(values, 19, 0.0, unit_system, "avl-rudder-input"),
-                        "flap": _canonical_float(values, 20, 0.0, unit_system, "avl-flap-input"),
-                    },
-                    elevator_bounds=(
-                        _canonical_float(values, 22, -20.0, unit_system, "avl-elevator-lower-input"),
-                        _canonical_float(values, 23, 20.0, unit_system, "avl-elevator-upper-input"),
-                    ),
-                    alpha_seed_deg=_canonical_float(values, 24, 4.0, unit_system, "avl-alpha-seed-input"),
-                    elevator_seed_deg=_canonical_float(values, 25, 0.0, unit_system, "avl-elevator-seed-input"),
-                    tol_CL=_canonical_float(values, 26, 0.01, unit_system, "avl-tol-cl-input"),
-                    tol_Cm=_canonical_float(values, 27, 0.001, unit_system, "avl-tol-cm-input"),
-                    max_iter=_int(values[28], 12),
-                    timeout_s=timeout_s,
-                )
-                result = trim_longitudinal_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=config)
-            else:
-                config = AVLCaseConfig(
-                    case_name=case_name,
-                    alpha=_canonical_float(values, 10, 0.0, unit_system, "avl-alpha-input"),
-                    beta=_canonical_float(values, 11, 0.0, unit_system, "avl-beta-input"),
-                    mach=_canonical_float(values, 6, 0.0, unit_system, "avl-mach-input"),
-                    velocity=_canonical_float(values, 5, 20.0, unit_system, "avl-velocity-input"),
-                    density=_canonical_float(values, 12, 1.225, unit_system, "avl-density-input"),
-                    aircraft_mass=_canonical_float(values, 13, 0.0, unit_system, "avl-mass-input"),
-                    roll_rate=_canonical_float(values, 14, 0.0, unit_system, "avl-roll-rate-input"),
-                    pitch_rate=_canonical_float(values, 15, 0.0, unit_system, "avl-pitch-rate-input"),
-                    yaw_rate=_canonical_float(values, 16, 0.0, unit_system, "avl-yaw-rate-input"),
-                    control_deflections={
-                        "aileron": _canonical_float(values, 17, 0.0, unit_system, "avl-aileron-input"),
-                        "elevator": _canonical_float(values, 18, 0.0, unit_system, "avl-elevator-input"),
-                        "rudder": _canonical_float(values, 19, 0.0, unit_system, "avl-rudder-input"),
-                        "flap": _canonical_float(values, 20, 0.0, unit_system, "avl-flap-input"),
-                    },
-                    altitude=altitude_arg,
-                    temp_shift_F=_canonical_float(values, 8, 0.0, unit_system, "avl-temp-shift-input"),
-                    timeout_s=timeout_s,
-                )
-                result = run_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=config)
+                work_root = _case_target(output_path)
+                mode = str(values[3] or "operating_point")
+                unit_system = _validate_display_unit_system(values[4])
+                avl_exe = str(values[1] or DEFAULT_AVL_EXE)
+                altitude = _canonical_float(values, 7, 0.0, unit_system, "avl-altitude-input")
+                altitude_arg = altitude if altitude > 0.0 else None
+                timeout_s = _int(values[9], 120)
 
+                if mode == "trim":
+                    config = AVLTrimConfig(
+                        case_name=case_name,
+                        CL_target=_canonical_float(values, 21, 0.45, unit_system, "avl-cl-target-input"),
+                        velocity=_canonical_float(values, 5, 20.0, unit_system, "avl-velocity-input"),
+                        altitude=altitude_arg,
+                        temp_shift_F=_canonical_float(values, 8, 0.0, unit_system, "avl-temp-shift-input"),
+                        mach=_canonical_float(values, 6, 0.0, unit_system, "avl-mach-input"),
+                        baseline_controls={
+                            "aileron": _canonical_float(values, 17, 0.0, unit_system, "avl-aileron-input"),
+                            "elevator": _canonical_float(values, 18, 0.0, unit_system, "avl-elevator-input"),
+                            "rudder": _canonical_float(values, 19, 0.0, unit_system, "avl-rudder-input"),
+                            "flap": _canonical_float(values, 20, 0.0, unit_system, "avl-flap-input"),
+                        },
+                        elevator_bounds=(
+                            _canonical_float(values, 22, -20.0, unit_system, "avl-elevator-lower-input"),
+                            _canonical_float(values, 23, 20.0, unit_system, "avl-elevator-upper-input"),
+                        ),
+                        alpha_seed_deg=_canonical_float(values, 24, 4.0, unit_system, "avl-alpha-seed-input"),
+                        elevator_seed_deg=_canonical_float(values, 25, 0.0, unit_system, "avl-elevator-seed-input"),
+                        tol_CL=_canonical_float(values, 26, 0.01, unit_system, "avl-tol-cl-input"),
+                        tol_Cm=_canonical_float(values, 27, 0.001, unit_system, "avl-tol-cm-input"),
+                        max_iter=_int(values[28], 12),
+                        timeout_s=timeout_s,
+                    )
+                    result = trim_longitudinal_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=config, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                else:
+                    config = AVLCaseConfig(
+                        case_name=case_name,
+                        alpha=_canonical_float(values, 10, 0.0, unit_system, "avl-alpha-input"),
+                        beta=_canonical_float(values, 11, 0.0, unit_system, "avl-beta-input"),
+                        mach=_canonical_float(values, 6, 0.0, unit_system, "avl-mach-input"),
+                        velocity=_canonical_float(values, 5, 20.0, unit_system, "avl-velocity-input"),
+                        density=_canonical_float(values, 12, 1.225, unit_system, "avl-density-input"),
+                        aircraft_mass=_canonical_float(values, 13, 0.0, unit_system, "avl-mass-input"),
+                        roll_rate=_canonical_float(values, 14, 0.0, unit_system, "avl-roll-rate-input"),
+                        pitch_rate=_canonical_float(values, 15, 0.0, unit_system, "avl-pitch-rate-input"),
+                        yaw_rate=_canonical_float(values, 16, 0.0, unit_system, "avl-yaw-rate-input"),
+                        control_deflections={
+                            "aileron": _canonical_float(values, 17, 0.0, unit_system, "avl-aileron-input"),
+                            "elevator": _canonical_float(values, 18, 0.0, unit_system, "avl-elevator-input"),
+                            "rudder": _canonical_float(values, 19, 0.0, unit_system, "avl-rudder-input"),
+                            "flap": _canonical_float(values, 20, 0.0, unit_system, "avl-flap-input"),
+                        },
+                        altitude=altitude_arg,
+                        temp_shift_F=_canonical_float(values, 8, 0.0, unit_system, "avl-temp-shift-input"),
+                        timeout_s=timeout_s,
+                    )
+                    
+                    if mode == "trim_sm":
+                        from ac_design_toolbox.avl.analysis import avl_neutral_point_and_SM, set_cg_for_static_margin
+                        sm_target = _float(sm_target_val, 0.10)
+                        case_dir = work_root / f"{case_name}_np"
+                        prepared = prepare_avl_airplane(airplane=airplane, working_directory=case_dir, file_name="Airplane.avl", write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                        np_result = avl_neutral_point_and_SM(
+                            airplane=airplane,
+                            avl_exe=avl_exe,
+                            working_directory=work_root,
+                            case_name=f"{case_name}_np",
+                            alpha_deg=config.alpha,
+                            beta_deg=config.beta,
+                            mach=config.mach,
+                            velocity=config.velocity,
+                            altitude=config.altitude,
+                            temp_shift_F=config.temp_shift_F,
+                            control_deflections=config.control_deflections,
+                            control_index_map=prepared["control_index_map"],
+                            timeout_s=timeout_s,
+                            write_geom=False,
+                        )
+                        airplane = set_cg_for_static_margin(
+                            airplane,
+                            x_np=np_result["x_np"],
+                            Cref=np_result["Cref"],
+                            SM_target=sm_target,
+                        )
+                        
+                        # Run the trim case after updating the CG
+                        if sm_trim_type == "alpha":
+                            # 1D Trim: vary elevator to hit Cm = 0 at fixed Alpha
+                            # Run case once to get baseline files and keystrokes
+                            result = run_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=config, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                            
+                            # Read keystrokes
+                            keystrokes_path = Path(result["paths"]["keystrokes"])
+                            content = keystrokes_path.read_text()
+                            
+                            # Find elevator index
+                            elevator_index = prepared["control_index_map"].get("elevator", 3)
+                            
+                            # Modify keystrokes: insert constraint before 'X'
+                            content = content.replace("\nX\n", f"\nD{elevator_index}\nPM 0.0\nX\n")
+                            keystrokes_path.write_text(content)
+                            
+                            # Run AVL again with modified keystrokes!
+                            from ac_design_toolbox.avl.io import run_avl
+                            out_path, err_path = run_avl(avl_exe, work_root / case_name, keystrokes_path, case_name, timeout_s=timeout_s)
+                            
+                            # Parse results again!
+                            from ac_design_toolbox.avl.parsing import parse_avl_stdout_like_asb
+                            text = out_path.read_text(encoding="utf-8", errors="replace")
+                            parsed = parse_avl_stdout_like_asb(
+                                text,
+                                velocity=config.velocity,
+                                rho=config.density,
+                                Sref=airplane.s_ref,
+                                Cref=airplane.c_ref,
+                                Bref=airplane.b_ref,
+                                alpha_deg=config.alpha,
+                                beta_deg=config.beta,
+                            )
+                            # Update result dict
+                            result["scalars"] = parsed
+                        else:
+                            # Trim for CL (Newton 2D)
+                            CL_target = _canonical_float([sm_cl_target_val], 0, 0.45, unit_system, "avl-sm-cl-target-input")
+                            trim_config = AVLTrimConfig(
+                                case_name=case_name,
+                                CL_target=CL_target,
+                                velocity=config.velocity,
+                                altitude=config.altitude,
+                                temp_shift_F=config.temp_shift_F,
+                                mach=config.mach,
+                                baseline_controls=config.control_deflections,
+                                elevator_bounds=(
+                                    _canonical_float(values, 22, -20.0, unit_system, "avl-elevator-lower-input"),
+                                    _canonical_float(values, 23, 20.0, unit_system, "avl-elevator-upper-input"),
+                                ),
+                                alpha_seed_deg=_canonical_float(values, 24, 4.0, unit_system, "avl-alpha-seed-input"),
+                                elevator_seed_deg=_canonical_float(values, 25, 0.0, unit_system, "avl-elevator-seed-input"),
+                                tol_CL=_canonical_float(values, 26, 0.01, unit_system, "avl-tol-cl-input"),
+                                tol_Cm=_canonical_float(values, 27, 0.001, unit_system, "avl-tol-cm-input"),
+                                max_iter=_int(values[28], 12),
+                                timeout_s=timeout_s,
+                            )
+                            result = trim_longitudinal_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=trim_config, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                    else:
+                        result = run_case(airplane=airplane, avl_exe=avl_exe, working_directory=work_root, config=config, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
+                    
+                    sm_metadata = None
+                    if mode == "trim_sm":
+                        sm_metadata = {
+                            "SM_target": sm_target,
+                            "x_np": np_result["x_np"],
+                            "x_cg": float(airplane.xyz_ref[0]),
+                        }
+
+            normalized_result = (
+                _normalized_sm_result_payload(dict(result), mode=mode, work_root=work_root, sm_metadata=sm_metadata)
+                if mode == "trim_sm"
+                else _normalized_result_payload(dict(result), mode=mode, work_root=work_root)
+            )
             result_payload = {
                 "mode": mode,
                 "case_name": case_name,
                 "work_root": str(work_root),
-                "result": _normalized_result_payload(dict(result), mode=mode, work_root=work_root),
+                "result": normalized_result,
             }
-            return no_update, result_payload, _format_status(f'Completed AVL {mode.replace("_", " ")} case "{case_name}".')
+            return no_update, result_payload, _format_status(f'Completed AVL {mode.replace("_", " ")} case "{case_name}".'), False, no_update, log_stream.getvalue() or no_update
         except Exception as exc:
-            return no_update, no_update, _format_status(f"AVL action failed: {exc}", is_error=True)
+            return no_update, no_update, _format_status(f"AVL action failed: {exc}", is_error=True), False, no_update, log_stream.getvalue() or no_update
 
     @app.callback(
         Output(_sid("avl-scalars-div", id_scope), "children"),
@@ -827,15 +1149,41 @@ def create_avl_page(
     @app.callback(
         Output(_sid("avl-operating-point-section", id_scope), "style"),
         Output(_sid("avl-trim-section", id_scope), "style"),
+        Output(_sid("avl-trim-sm-section", id_scope), "style"),
         Output(_sid("avl-run-button", id_scope), "children"),
         Input(_sid("avl-run-mode-dropdown", id_scope), "value"),
     )
-    def toggle_run_mode_sections(run_mode: str | None):
-        """Show only the input group used by the selected AVL workflow."""
+    def toggle_run_mode(mode: str):
+        if mode == "trim":
+            return {"display": "none"}, {"display": "grid", "gap": "10px"}, {"display": "none"}, "Run Longitudinal Trim"
+        elif mode == "trim_sm":
+            return {"display": "grid", "gap": "10px"}, {"display": "none"}, {"display": "grid", "gap": "10px"}, "Run SM Target"
+        else:
+            return {"display": "grid", "gap": "10px"}, {"display": "none"}, {"display": "none"}, "Run Operating Point"
 
-        if str(run_mode or "operating_point") == "trim":
-            return {"display": "none"}, {"display": "grid", "gap": "10px"}, "Run Trim"
-        return {"display": "grid", "gap": "10px"}, {"display": "none"}, "Run Operating Point"
+    @app.callback(
+        Output(_sid("avl-sm-cl-target-div", id_scope), "style"),
+        Input(_sid("avl-sm-trim-type-dropdown", id_scope), "value"),
+    )
+    def toggle_sm_trim_type(trim_type: str):
+        if trim_type == "cl":
+            return {"display": "grid"}
+        else:
+            return {"display": "none"}
+
+    @app.callback(
+        Output(_sid("avl-alpha-input", id_scope), "disabled"),
+        Output(_sid("avl-elevator-input", id_scope), "disabled"),
+        Input(_sid("avl-run-mode-dropdown", id_scope), "value"),
+        Input(_sid("avl-sm-trim-type-dropdown", id_scope), "value"),
+    )
+    def disable_trim_solved_operating_point_inputs(mode: str, sm_trim_type: str):
+        """Disable operating-point values that are solved in the active mode."""
+
+        sm_target_mode = mode == "trim_sm"
+        alpha_is_solved = sm_target_mode and sm_trim_type == "cl"
+        elevator_is_solved = sm_target_mode
+        return alpha_is_solved, elevator_is_solved
 
     return page_layout
 

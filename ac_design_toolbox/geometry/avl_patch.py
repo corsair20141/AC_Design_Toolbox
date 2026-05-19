@@ -78,12 +78,20 @@ def apply_avl_keystroke_patch():
 class patched_AVL(asb.AVL):
     """Patched AeroSandbox AVL subclass with reliable control-surface handling."""
 
-    def write_avl(self, file_name="airplane.avl"):
+    def write_avl(self, file_name="airplane.avl", write_cdcl=False, write_fuselage=False):
         """Write AVL geometry and record control-index ordering for later runs."""
         directory = Path(self.working_directory)
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / (file_name if isinstance(file_name, str) else str(file_name))
-        super().write_avl(path)
+        
+        original_fuselages = getattr(self.airplane, "fuselages", [])
+        if not write_fuselage:
+            self.airplane.fuselages = []
+        try:
+            super().write_avl(path)
+        finally:
+            if not write_fuselage:
+                self.airplane.fuselages = original_fuselages
 
         axis_idx = {}
         for wing in getattr(self.airplane, "wings", []):
@@ -136,6 +144,19 @@ class patched_AVL(asb.AVL):
                         tokens[5] = f"{axis[2]:g}"
                         lines[j] = " ".join(tokens)
             i += 1
+
+        if not write_cdcl:
+            new_lines = []
+            skip = 0
+            for line in lines:
+                if skip > 0:
+                    skip -= 1
+                    continue
+                if line.strip() == "CDCL":
+                    skip = 2
+                    continue
+                new_lines.append(line)
+            lines = new_lines
 
         path.write_text("\n".join(lines))
         self._control_index_map = {name: idx + 1 for idx, name in enumerate(control_order)}

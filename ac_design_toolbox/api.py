@@ -62,6 +62,8 @@ def prepare_avl_airplane(
     working_directory: str | Path,
     op_point: "asb.OperatingPoint | None" = None,
     file_name: str = "Airplane.avl",
+    write_cdcl: bool = False,
+    write_fuselage: bool = False,
 ) -> dict[str, Any]:
     """Write AVL geometry and return the control-index map discovered by the patched writer."""
     import aerosandbox as asb
@@ -75,7 +77,7 @@ def prepare_avl_airplane(
         op_point = asb.OperatingPoint()
 
     avl = patched_AVL(airplane=airplane, op_point=op_point, working_directory=working_directory)
-    avl.write_avl(file_name)
+    avl.write_avl(file_name, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
 
     return {
         "geom": working_directory / file_name,
@@ -94,6 +96,8 @@ def run_case(
     write_geom: bool = True,
     force_rewrite_geom: bool = True,
     geom_writer=None,
+    write_cdcl: bool = False,
+    write_fuselage: bool = False,
 ):
     """Run a single AVL case using a structured configuration object."""
     from ac_design_toolbox.avl.analysis import run_avl_case
@@ -103,7 +107,7 @@ def run_case(
 
     if control_index_map is None:
         case_dir = working_directory / config.case_name
-        prepared = prepare_avl_airplane(airplane=airplane, working_directory=case_dir, op_point=op_point)
+        prepared = prepare_avl_airplane(airplane=airplane, working_directory=case_dir, op_point=op_point, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
         control_index_map = prepared["control_index_map"]
         effective_write_geom = False
 
@@ -144,6 +148,8 @@ def trim_longitudinal_case(
     write_geom: bool = True,
     force_rewrite_geom: bool = True,
     geom_writer=None,
+    write_cdcl: bool = False,
+    write_fuselage: bool = False,
 ):
     """Run the preferred longitudinal-trim workflow with structured inputs."""
     from ac_design_toolbox.avl.trim import avl_trim_longitudinal
@@ -153,7 +159,7 @@ def trim_longitudinal_case(
 
     if control_index_map is None:
         case_dir = working_directory / config.case_name
-        prepared = prepare_avl_airplane(airplane=airplane, working_directory=case_dir, op_point=op_point)
+        prepared = prepare_avl_airplane(airplane=airplane, working_directory=case_dir, op_point=op_point, write_cdcl=write_cdcl, write_fuselage=write_fuselage)
         control_index_map = prepared["control_index_map"]
         effective_write_geom = False
 

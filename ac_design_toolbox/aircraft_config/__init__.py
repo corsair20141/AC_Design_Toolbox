@@ -2,6 +2,7 @@
 
 from ac_design_toolbox.aircraft_config.models import (
     AircraftDefinition,
+    CenterOfGravityConfig,
     ControlSurfaceConfig,
     DesignVariableSpec,
     FuselageConfig,
@@ -38,6 +39,7 @@ from ac_design_toolbox.aircraft_config.variables import (
 
 __all__ = [
     "AircraftDefinition",
+    "CenterOfGravityConfig",
     "ControlSurfaceConfig",
     "DesignVariableSpec",
     "FuselageConfig",

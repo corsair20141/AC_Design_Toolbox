@@ -179,7 +179,7 @@ The public interface is centered on:
 
 `AircraftDefinition` is versioned and JSON-round-trippable. It stores:
 
-- canonical geometry for the reference point, explicit `lifting_surfaces`, and a simple fuselage
+- canonical geometry for the moment reference point, native center of gravity, explicit `lifting_surfaces`, and a simple fuselage
 - stable component IDs for buildable lifting surfaces, including mirrored right/left IDs for symmetric vertical surfaces
 - optional control-surface records on each lifting surface, stored as
   `lifting_surfaces[*].control_surfaces`

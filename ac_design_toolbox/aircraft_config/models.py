@@ -81,6 +81,21 @@ def _json_safe_copy(name: str, value: Any) -> Any:
         raise TypeError(f"{name} must be JSON-serializable.") from exc
 
 
+def _center_of_gravity_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Return native or legacy CG payload from an aircraft-definition mapping."""
+
+    if "center_of_gravity" in data:
+        return data.get("center_of_gravity", {})
+    extensions = data.get("extensions", {})
+    if isinstance(extensions, dict):
+        solar_uas_extension = extensions.get("solar_uas", {})
+        if isinstance(solar_uas_extension, dict):
+            legacy_cg = solar_uas_extension.get("center_of_gravity")
+            if isinstance(legacy_cg, dict):
+                return legacy_cg
+    return {}
+
+
 @dataclass
 class ControlSurfaceConfig:
     """Canonical control-surface definition for one lifting surface.
@@ -175,6 +190,47 @@ class ReferenceGeometryConfig:
             x_ref=data.get("x_ref", 0.0),
             y_ref=data.get("y_ref", 0.0),
             z_ref=data.get("z_ref", 0.0),
+        )
+
+
+@dataclass
+class CenterOfGravityConfig:
+    """Aircraft center-of-gravity location in body-frame coordinates.
+
+    Bare scalar dimensional inputs are stored in meters after normalization.
+    This is separate from ``ReferenceGeometryConfig`` because the aerodynamic
+    moment-reference point and the physical CG are not necessarily identical.
+    """
+
+    x_cg: QuantityInput = 0.0
+    y_cg: QuantityInput = 0.0
+    z_cg: QuantityInput = 0.0
+
+    def __post_init__(self) -> None:
+        """Normalize the CG coordinates into meters."""
+        self.x_cg = coerce_quantity("x_cg", self.x_cg, "m", "length")
+        self.y_cg = coerce_quantity("y_cg", self.y_cg, "m", "length")
+        self.z_cg = coerce_quantity("z_cg", self.z_cg, "m", "length")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the configuration to a plain dictionary."""
+        return {
+            "x_cg": self.x_cg,
+            "y_cg": self.y_cg,
+            "z_cg": self.z_cg,
+        }
+
+    def as_tuple(self) -> tuple[float, float, float]:
+        """Return the CG as a numeric body-frame tuple in meters."""
+        return (float(self.x_cg), float(self.y_cg), float(self.z_cg))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CenterOfGravityConfig":
+        """Build the configuration from a plain dictionary."""
+        return cls(
+            x_cg=data.get("x_cg", data.get("x", 0.0)),
+            y_cg=data.get("y_cg", data.get("y", 0.0)),
+            z_cg=data.get("z_cg", data.get("z", 0.0)),
         )
 
 
@@ -818,6 +874,7 @@ class AircraftDefinition:
         "downstream solar-layout work."
     )
     reference_geometry: ReferenceGeometryConfig = field(default_factory=ReferenceGeometryConfig)
+    center_of_gravity: CenterOfGravityConfig = field(default_factory=CenterOfGravityConfig)
     lifting_surfaces: list[LiftingSurfaceConfig] = field(default_factory=default_lifting_surfaces)
     fuselage: FuselageConfig = field(default_factory=FuselageConfig)
     design_variables: list[DesignVariableSpec] = field(
@@ -850,6 +907,8 @@ class AircraftDefinition:
 
         if isinstance(self.reference_geometry, dict):
             self.reference_geometry = ReferenceGeometryConfig.from_dict(self.reference_geometry)
+        if isinstance(self.center_of_gravity, dict):
+            self.center_of_gravity = CenterOfGravityConfig.from_dict(self.center_of_gravity)
         self.lifting_surfaces = [
             surface if isinstance(surface, LiftingSurfaceConfig) else LiftingSurfaceConfig.from_dict(surface)
             for surface in self.lifting_surfaces
@@ -905,6 +964,7 @@ class AircraftDefinition:
             "name": self.name,
             "description": self.description,
             "reference_geometry": self.reference_geometry.to_dict(),
+            "center_of_gravity": self.center_of_gravity.to_dict(),
             "lifting_surfaces": [surface.to_dict() for surface in self.lifting_surfaces],
             "fuselage": self.fuselage.to_dict(),
             "design_variables": [variable.to_dict() for variable in self.design_variables],
@@ -935,6 +995,7 @@ class AircraftDefinition:
             name=data.get("name", defaults.name),
             description=data.get("description", defaults.description),
             reference_geometry=ReferenceGeometryConfig.from_dict(data.get("reference_geometry", {})),
+            center_of_gravity=CenterOfGravityConfig.from_dict(_center_of_gravity_payload(data)),
             lifting_surfaces=[
                 LiftingSurfaceConfig.from_dict(surface)
                 for surface in data.get(
@@ -959,6 +1020,7 @@ class AircraftDefinition:
 
 __all__ = [
     "AircraftDefinition",
+    "CenterOfGravityConfig",
     "ControlSurfaceConfig",
     "DesignVariableSpec",
     "FuselageConfig",

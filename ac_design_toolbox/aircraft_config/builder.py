@@ -480,11 +480,7 @@ def build_aircraft(definition: AircraftDefinition) -> asb.Airplane:
 
     return asb.Airplane(
         name=definition.name,
-        xyz_ref=[
-            definition.reference_geometry.x_ref,
-            definition.reference_geometry.y_ref,
-            definition.reference_geometry.z_ref,
-        ],
+        xyz_ref=list(definition.center_of_gravity.as_tuple()),
         wings=wings,
         fuselages=fuselages,
     )
