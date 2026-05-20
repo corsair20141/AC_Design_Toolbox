@@ -48,12 +48,20 @@ def _source_voltage(battery: BatteryPack | None, voltage: QuantityInput | None) 
     return voltage_v
 
 
-def _coerce_rotational_speed_bounds(bounds: tuple[QuantityInput, QuantityInput]) -> tuple[float, float]:
-    """Return lower and upper rotational-speed bounds in rpm."""
+def _coerce_rotational_speed_bounds(bounds: tuple[QuantityInput | None, QuantityInput | None]) -> tuple[float, float]:
+    """Return lower and upper rotational-speed bounds in rpm.
+
+    ``None`` or blank entries mean "use the solver's default bound" for that
+    side. This lets GUI/workflow payloads leave RPM bounds unspecified without
+    having to write default values back into component configuration.
+    """
     if len(bounds) != 2:
         raise TypeError("rotational_speed_bounds must contain exactly two values.")
-    lower = coerce_quantity("rotational_speed_bounds[0]", bounds[0], "rpm", "rotational_speed")
-    upper = coerce_quantity("rotational_speed_bounds[1]", bounds[1], "rpm", "rotational_speed")
+    default_lower, default_upper = (100.0, 50000.0)
+    lower_input = default_lower if bounds[0] in (None, "") else bounds[0]
+    upper_input = default_upper if bounds[1] in (None, "") else bounds[1]
+    lower = coerce_quantity("rotational_speed_bounds[0]", lower_input, "rpm", "rotational_speed")
+    upper = coerce_quantity("rotational_speed_bounds[1]", upper_input, "rpm", "rotational_speed")
     if lower <= 0.0 or upper <= 0.0:
         raise ValueError("rotational_speed_bounds must be positive.")
     if lower >= upper:

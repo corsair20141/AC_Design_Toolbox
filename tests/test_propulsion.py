@@ -340,6 +340,29 @@ class PropulsionModelTests(unittest.TestCase):
         self.assertTrue(result.converged, result.notes)
         self.assertAlmostEqual(result.propeller.thrust, 0.5, delta=0.05)
 
+    def test_blank_rotational_speed_bounds_use_solver_defaults(self) -> None:
+        """Blank RPM bounds should be accepted without changing caller payloads."""
+        motor = ElectricMotor(kv=(920.0, "rpm/V"), resistance=0.09, no_load_current=0.7)
+        battery = BatteryPack(nominal_voltage=14.8, internal_resistance=0.03, capacity=5.0)
+        esc = ElectronicSpeedController(efficiency=0.97, resistance=0.01)
+        propeller = CoefficientPropeller(diameter=0.254, ct=0.09, cp=0.04)
+        bounds = (None, None)
+
+        result = solve_throttle_for_required_thrust(
+            motor=motor,
+            propeller=propeller,
+            required_thrust=0.5,  # N
+            battery=battery,
+            esc=esc,
+            airspeed=8.0,  # m/s
+            density=1.225,  # kg/m^3
+            rotational_speed_bounds=bounds,
+            throttle_bounds=(0.1, 1.0),
+        )
+
+        self.assertIsInstance(result, PropulsionOperatingPoint)
+        self.assertEqual(bounds, (None, None))
+
     def test_battery_constant_voltage_remains_backward_compatible(self) -> None:
         """Default battery behavior should remain nominal-voltage minus IR sag."""
         battery = BatteryPack(

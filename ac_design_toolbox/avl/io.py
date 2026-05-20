@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple
 
 import aerosandbox as asb
 
+from ac_design_toolbox.atmosphere import standard_atmosphere
+
 
 _AVL_HEADER_REFS = re.compile(
     r"^\s*(?P<Sref>[-+.\deE]+)\s+(?P<Cref>[-+.\deE]+)\s+(?P<Bref>[-+.\deE]+)\s*$"
@@ -63,17 +65,12 @@ def parse_refs_from_avl(avl_path: Path) -> Tuple[float, float, float]:
 
 def isa_density(altitude_m: float, temp_shift_F: float = 0.0) -> float:
     """Return ISA density with an optional temperature offset in degrees Fahrenheit."""
-    T0 = 288.15
-    p0 = 101325.0
-    lapse = -0.0065
-    gas_constant = 287.058
-    g0 = 9.80665
     altitude = max(0.0, float(altitude_m))
-
-    temperature = T0 + lapse * altitude
-    temperature += temp_shift_F * (5.0 / 9.0)
-    pressure = p0 * (temperature / T0) ** (-g0 / (lapse * gas_constant))
-    return pressure / (gas_constant * temperature)
+    atmosphere = standard_atmosphere(altitude=altitude, units="si", temp_shift_F=float(temp_shift_F))
+    density = float(atmosphere["rho"])
+    if density <= 0.0:
+        raise ValueError(f"ISA density must be positive; got {density!r} kg/m^3.")
+    return density
 
 
 def write_min_mass_file(case_dir: Path, rho: float) -> Path:

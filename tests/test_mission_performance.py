@@ -13,6 +13,7 @@ from ac_design_toolbox import (
     MissionOperatingPoint,
 )
 from ac_design_toolbox.atmosphere import standard_atmosphere
+from ac_design_toolbox.avl.io import isa_density
 from ac_design_toolbox.mission import MissionPerformanceModel, MissionPerformancePoint
 from ac_design_toolbox.mission.units import convert_value
 
@@ -106,6 +107,13 @@ class MissionPerformanceTests(unittest.TestCase):
         """Check direct helper conversions where units appear in more than one family."""
         self.assertAlmostEqual(convert_value(30.0, "m_s", "kts"), 30.0 / KTS_TO_M_S, places=7)
         self.assertAlmostEqual(convert_value(500.0, "ft/min", "m_s"), 500.0 * FT_TO_M / 60.0, places=7)
+
+    def test_avl_isa_density_uses_full_standard_atmosphere(self) -> None:
+        """AVL density helper should not blow up near the troposphere lapse singularity."""
+        density = isa_density(44330.0)
+
+        self.assertGreater(density, 0.0)
+        self.assertLess(density, 1.0e-2)
 
     def test_clean_break_and_invalid_units_fail(self) -> None:
         """Verify malformed quantities, unsupported units, and old kwargs fail clearly."""
