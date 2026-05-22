@@ -1,5 +1,5 @@
-catalog_id,name,module_efficiency,areal_density_kg_m2,notes
-example_mono_si_module,Example mono-Si module,0.22,0.35,Fictional seed row for validation setup.
-sunpower_e60,SunPower E60,0.237,0.589797,"SunPower E60 - Flexible Monocrystalline Super Cells
+﻿"catalog_id","name","module_efficiency","areal_density_kg_m2","temperature_coefficient","reference_temp","packing_factor","notes"
+"example_mono_si_module","Example mono-Si module","0.22","0.35","-0.004","25","1","Fictional seed row for validation setup."
+"sunpower_e60","SunPower E60","0.237","0.589797","-0.004","25","1","SunPower E60 - Flexible Monocrystalline Super Cells
 125x125mm
 Each cell outputs a high voltage of up to 0.65 volts"

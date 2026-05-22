@@ -142,6 +142,7 @@ class MissionPerformancePoint:
     - ``drag_force`` in ``n``
     - ``dynamic_pressure`` in ``pa``
     - ``air_density`` in ``kg_m3``
+    - optional aerodynamic/control angles in ``deg``
     """
 
     feasible: bool
@@ -154,6 +155,13 @@ class MissionPerformancePoint:
     drag_coefficient: float | None = None
     dynamic_pressure: QuantityInput | None = None
     air_density: QuantityInput | None = None
+    angle_of_attack: QuantityInput | None = None
+    sideslip_angle: QuantityInput | None = None
+    elevator_deflection: QuantityInput | None = None
+    aileron_deflection: QuantityInput | None = None
+    rudder_deflection: QuantityInput | None = None
+    flap_deflection: QuantityInput | None = None
+    control_surface_deflections: Mapping[str, QuantityInput] = field(default_factory=dict)
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -191,6 +199,34 @@ class MissionPerformancePoint:
             self,
             "drag_coefficient",
             _require_optional_finite_scalar("drag_coefficient", self.drag_coefficient),
+        )
+        for field_name in (
+            "angle_of_attack",
+            "sideslip_angle",
+            "elevator_deflection",
+            "aileron_deflection",
+            "rudder_deflection",
+            "flap_deflection",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                coerce_optional_quantity(field_name, getattr(self, field_name), "deg", "angle"),
+            )
+        object.__setattr__(
+            self,
+            "control_surface_deflections",
+            MappingProxyType(
+                {
+                    str(control_name): coerce_quantity(
+                        f"control_surface_deflections[{control_name}]",
+                        deflection,
+                        "deg",
+                        "angle",
+                    )
+                    for control_name, deflection in dict(self.control_surface_deflections).items()
+                }
+            ),
         )
         object.__setattr__(self, "notes", str(self.notes))
 

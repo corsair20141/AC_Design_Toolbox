@@ -374,7 +374,7 @@ def solve_throttle_for_required_thrust(
     density: QuantityInput = 1.225,
     rotational_speed_bounds: tuple[QuantityInput, QuantityInput] = (100.0, 50000.0),
     throttle_bounds: tuple[float, float] = (0.0, 1.0),
-    thrust_tolerance: float = 1e-4,
+    thrust_tolerance: float = 1e-2,
     max_iterations: int = 60,
 ) -> PropulsionOperatingPoint:
     """Solve throttle so the coupled propeller thrust matches a target."""

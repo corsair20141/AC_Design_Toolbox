@@ -347,7 +347,10 @@ class MissionPerformanceTests(unittest.TestCase):
         self.assertTrue(result.feasible)
         self.assertAlmostEqual(result.pitch, expected_pitch_deg, places=7)
         self.assertAlmostEqual(result.drag_force, expected_drag, places=7)
-        self.assertIn("AVL longitudinal trim solved alpha=4.000 deg and elevator=-1.500 deg.", result.notes)
+        self.assertAlmostEqual(result.angle_of_attack, 4.0)
+        self.assertAlmostEqual(result.elevator_deflection, -1.5)
+        self.assertEqual(result.control_surface_deflections["elevator"], -1.5)
+        self.assertIn("AVL solved alpha=4.000 deg and elevator=-1.500 deg.", result.notes)
         self.assertIn("Banked-turn effects enter through the target load factor only", result.notes)
         self.assertEqual(mock_prepare.call_count, 1)
 
@@ -357,6 +360,51 @@ class MissionPerformanceTests(unittest.TestCase):
         self.assertEqual(trim_kwargs["control_index_map"]["elevator"], 2)
         self.assertAlmostEqual(trim_kwargs["velocity"], 28.0, places=7)
         self.assertAlmostEqual(trim_kwargs["altitude"], 1200.0, places=7)
+
+    @unittest.skipUnless(AVLMissionPerformanceModel is not None, "AVL mission adapter dependencies are unavailable.")
+    @patch("ac_design_toolbox.mission.avl.avl_trim_longitudinal")
+    @patch("ac_design_toolbox.mission.avl.prepare_avl_airplane")
+    def test_avl_model_reports_generic_avl_result_state_fields(self, mock_prepare, mock_trim) -> None:
+        """AVL mission reporting should not depend on longitudinal-trim-only result keys."""
+        mock_prepare.return_value = {"control_index_map": {"aileron": 1, "elevator": 2, "rudder": 3, "flap": 4}}
+        mock_trim.return_value = {
+            "alpha_deg": 3.5,
+            "beta_deg": -0.2,
+            "elevator_deflection_deg": -1.0,
+            "aileron_deflection_deg": 0.3,
+            "rudder_deflection_deg": -0.4,
+            "flap_deflection_deg": 2.0,
+            "CL": 0.15,
+            "Cm": 0.0,
+            "CD": 0.041,
+            "rho": 1.10,
+            "newton2d_failure_reason": "",
+        }
+
+        model = AVLMissionPerformanceModel(
+            airplane=object(),
+            aircraft=self.config,
+            avl_exe=Path("avl.exe"),
+            working_directory=Path.cwd() / "test_runs" / "mission_avl",
+        )
+
+        result = model.evaluate(
+            MissionOperatingPoint(
+                phase_name="generic_avl",
+                altitude=1200.0,
+                airspeed=28.0,
+                climb_rate=0.0,
+                pitch_hint=3.5,
+            )
+        )
+
+        self.assertAlmostEqual(result.angle_of_attack, 3.5)
+        self.assertAlmostEqual(result.sideslip_angle, -0.2)
+        self.assertAlmostEqual(result.elevator_deflection, -1.0)
+        self.assertAlmostEqual(result.aileron_deflection, 0.3)
+        self.assertAlmostEqual(result.rudder_deflection, -0.4)
+        self.assertAlmostEqual(result.flap_deflection, 2.0)
+        self.assertEqual(result.control_surface_deflections["flap"], 2.0)
 
 
 if __name__ == "__main__":

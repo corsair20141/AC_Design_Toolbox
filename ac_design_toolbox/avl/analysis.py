@@ -110,6 +110,10 @@ def run_avl_case(
         alpha_deg=alpha,
         beta_deg=beta,
     )
+    parsed.setdefault("alpha_deg", float(alpha))
+    parsed.setdefault("beta_deg", float(beta))
+    for control_name, deflection in ctrl_apply.items():
+        parsed.setdefault(f"{control_name}_deflection_deg", float(deflection))
 
     stab_path = case_dir / f"{case_name}.stability"
     stability_derivs = None

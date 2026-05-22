@@ -31,6 +31,48 @@ def _sanitize_case_name(text: str) -> str:
     return sanitized or "mission"
 
 
+def _first_float(mapping: Mapping[str, Any], *keys: str) -> float | None:
+    """Return the first finite scalar value from a result mapping."""
+    for key in keys:
+        if key not in mapping or mapping[key] is None:
+            continue
+        return float(mapping[key])
+    return None
+
+
+def _avl_control_deflections(
+    result: Mapping[str, Any],
+    baseline_controls: Mapping[str, float],
+) -> dict[str, float]:
+    """Return named control deflections from AVL result data plus baselines."""
+    controls = {str(name): float(value) for name, value in baseline_controls.items()}
+    result_controls = result.get("control_surface_deflections") or result.get("control_deflections")
+    if isinstance(result_controls, Mapping):
+        controls.update({str(name): float(value) for name, value in result_controls.items()})
+
+    for control_name in ("elevator", "aileron", "rudder", "flap"):
+        value = _first_float(
+            result,
+            f"{control_name}_trim_deg",
+            f"{control_name}_deflection_deg",
+            f"{control_name}_deflection",
+            control_name,
+        )
+        if value is not None:
+            controls[control_name] = value
+    return controls
+
+
+def _avl_angle_of_attack(result: Mapping[str, Any]) -> float | None:
+    """Return angle of attack from common AVL result field names."""
+    return _first_float(result, "alpha_trim_deg", "alpha_deg", "Alpha", "alpha")
+
+
+def _avl_sideslip_angle(result: Mapping[str, Any]) -> float | None:
+    """Return sideslip angle from common AVL result field names."""
+    return _first_float(result, "beta_trim_deg", "beta_deg", "Beta", "beta")
+
+
 @dataclass
 class AVLMissionPerformanceModel:
     """Mission-performance adapter that gets aerodynamic coefficients from AVL.
@@ -130,10 +172,14 @@ class AVLMissionPerformanceModel:
             pitch_deg = degrees(resolved_state.flight_path_angle_rad) + float(trim_result["alpha_trim_deg"])
             notes.append("Returned pitch adds AVL trim alpha to the prescribed flight-path angle.")
 
-        notes.append(
-            f"AVL longitudinal trim solved alpha={trim_result['alpha_trim_deg']:.3f} deg and "
-            f"elevator={trim_result['elevator_trim_deg']:.3f} deg."
-        )
+        reported_alpha_deg = _avl_angle_of_attack(trim_result)
+        reported_controls = _avl_control_deflections(trim_result, self.baseline_controls)
+        reported_elevator_deg = reported_controls.get("elevator")
+        if reported_alpha_deg is not None and reported_elevator_deg is not None:
+            notes.append(
+                f"AVL solved alpha={reported_alpha_deg:.3f} deg and "
+                f"elevator={reported_elevator_deg:.3f} deg."
+            )
         if trim_result.get("newton2d_failure_reason"):
             notes.append(f"AVL trim fell back to the 1D solver ({trim_result['newton2d_failure_reason']}).")
         if abs(resolved_state.bank_deg) > 1e-9:
@@ -148,6 +194,10 @@ class AVLMissionPerformanceModel:
             notes.append(f"AVL trim residual Cm is {float(trim_result['Cm']):+.4f}.")
         if propulsion_power_w < 0.0:
             notes.append("Negative propulsion_power means the climb-energy balance predicts no net propulsive input.")
+
+        control_surface_deflections = reported_controls
+        alpha_deg = reported_alpha_deg
+        beta_deg = _avl_sideslip_angle(trim_result)
 
         feasible = resolved_state.feasible
         if abs(lift_coefficient - lift_coefficient_target) > self.tol_CL or abs(float(trim_result["Cm"])) > self.tol_Cm:
@@ -173,6 +223,13 @@ class AVLMissionPerformanceModel:
             drag_coefficient=drag_coefficient,
             dynamic_pressure=dynamic_pressure_pa,
             air_density=air_density_kg_m3,
+            angle_of_attack=alpha_deg,
+            sideslip_angle=beta_deg,
+            elevator_deflection=control_surface_deflections.get("elevator"),
+            aileron_deflection=control_surface_deflections.get("aileron"),
+            rudder_deflection=control_surface_deflections.get("rudder"),
+            flap_deflection=control_surface_deflections.get("flap"),
+            control_surface_deflections=control_surface_deflections,
             notes=" ".join(notes).strip(),
         )
 
