@@ -163,6 +163,7 @@ class MissionPerformancePoint:
     flap_deflection: QuantityInput | None = None
     control_surface_deflections: Mapping[str, QuantityInput] = field(default_factory=dict)
     notes: str = ""
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Normalize public result fields into the documented computational units."""
@@ -229,6 +230,7 @@ class MissionPerformancePoint:
             ),
         )
         object.__setattr__(self, "notes", str(self.notes))
+        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
 
 
 @dataclass(frozen=True)

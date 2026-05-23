@@ -176,6 +176,8 @@ class AVLMissionPerformanceModel:
         reported_controls = _avl_control_deflections(trim_result, self.baseline_controls)
         reported_elevator_deg = reported_controls.get("elevator")
         if reported_alpha_deg is not None and reported_elevator_deg is not None:
+            self.alpha_seed_deg = float(reported_alpha_deg)
+            self.elevator_seed_deg = float(reported_elevator_deg)
             notes.append(
                 f"AVL solved alpha={reported_alpha_deg:.3f} deg and "
                 f"elevator={reported_elevator_deg:.3f} deg."
@@ -231,6 +233,7 @@ class AVLMissionPerformanceModel:
             flap_deflection=control_surface_deflections.get("flap"),
             control_surface_deflections=control_surface_deflections,
             notes=" ".join(notes).strip(),
+            diagnostics={"avl_call_count": trim_result.get("avl_calls")},
         )
 
     def _build_case_name(self, op: MissionOperatingPoint) -> str:
