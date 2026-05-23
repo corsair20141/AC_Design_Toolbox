@@ -320,7 +320,9 @@ class MissionPerformanceTests(unittest.TestCase):
             "CL": 0.15,
             "Cm": 0.0,
             "CD": 0.041,
+            "CDi": 0.012,
             "rho": 1.10,
+            "K": 0.012 / (0.15**2),
             "newton2d_failure_reason": "",
         }
 
@@ -342,11 +344,17 @@ class MissionPerformanceTests(unittest.TestCase):
         gamma_rad = math.asin(op.climb_rate / op.airspeed)
         expected_pitch_deg = math.degrees(gamma_rad) + 4.0
         expected_q = 0.5 * 1.10 * op.airspeed**2
-        expected_drag = expected_q * self.config.wing_area * 0.041
+        expected_drag = expected_q * self.config.wing_area * (0.041 + self.config.zero_lift_drag_coefficient)
 
         self.assertTrue(result.feasible)
         self.assertAlmostEqual(result.pitch, expected_pitch_deg, places=7)
         self.assertAlmostEqual(result.drag_force, expected_drag, places=7)
+        self.assertAlmostEqual(result.drag_coefficient, 0.041 + self.config.zero_lift_drag_coefficient)
+        self.assertAlmostEqual(result.diagnostics["raw_avl_drag_coefficient"], 0.041)
+        self.assertAlmostEqual(
+            result.diagnostics["avl_oswald_efficiency"],
+            0.15**2 / (math.pi * self.config.aspect_ratio * 0.012),
+        )
         self.assertAlmostEqual(result.angle_of_attack, 4.0)
         self.assertAlmostEqual(result.elevator_deflection, -1.5)
         self.assertEqual(result.control_surface_deflections["elevator"], -1.5)

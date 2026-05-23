@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from math import degrees, sin
+from math import degrees, pi, sin
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -54,6 +54,16 @@ class AVLAeroPolarConfig:
 class AVLAeroPolarTable:
     config: AVLAeroPolarConfig
     data: pd.DataFrame
+
+    @classmethod
+    def from_dataframe(cls, config: AVLAeroPolarConfig, dataframe: pd.DataFrame) -> "AVLAeroPolarTable":
+        """Build a polar table from an existing DataFrame."""
+        return cls(config=config, data=dataframe.copy())
+
+    @classmethod
+    def from_records(cls, config: AVLAeroPolarConfig, records: list[dict[str, Any]]) -> "AVLAeroPolarTable":
+        """Build a polar table from JSON-style row records."""
+        return cls(config=config, data=pd.DataFrame(list(records)))
 
     def to_dataframe(self, flatten: bool = True) -> pd.DataFrame:
         """Return the polar table as a DataFrame."""
@@ -131,6 +141,26 @@ def _trim_elevator_for_cm(
             a, fa = de_new, cm_new
 
     return {"trimmed": False, "elevator_deg": de_hit, "res": res_hit, "Cm": fb}
+
+
+def _polar_oswald_efficiency(row: dict[str, float], aspect_ratio: float) -> float | None:
+    """Estimate AVL span efficiency from one interpolated polar row."""
+    for key in ("avl_e", "avl_oswald_efficiency", "avl_span_efficiency", "e", "span_efficiency"):
+        try:
+            value = float(row[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0.0:
+            return value
+
+    try:
+        cl_value = float(row.get("CL"))
+        cdi_value = float(row.get("avl_CDind", row.get("CDi", row.get("CDind"))))
+    except (TypeError, ValueError):
+        return None
+    if np.isfinite(cl_value) and np.isfinite(cdi_value) and cdi_value > 0.0 and aspect_ratio > 0.0:
+        return cl_value * cl_value / (pi * float(aspect_ratio) * cdi_value)
+    return None
 
 
 def _evaluate_single_alpha(
@@ -218,6 +248,7 @@ class AVLPolarMissionPerformanceModel:
     airplane: "asb.Airplane | Any"
     aircraft: MissionAircraftPerformanceConfig
     config: AVLAeroPolarConfig
+    polar_table: AVLAeroPolarTable | None = None
     control_index_map: Mapping[str, int] | None = None
     case_name_prefix: str = "mission_polar"
     gravity_m_s2: float = STANDARD_GRAVITY_M_S2
@@ -228,6 +259,8 @@ class AVLPolarMissionPerformanceModel:
     def __post_init__(self):
         if self.control_index_map is not None:
             self._cached_control_index_map = dict(self.control_index_map)
+        if self.polar_table is not None:
+            self._table = self.polar_table
 
     def get_polar_table(self) -> AVLAeroPolarTable:
         """Return the underlying polar table, generating it if necessary."""
@@ -282,7 +315,9 @@ class AVLPolarMissionPerformanceModel:
             if pd.api.types.is_numeric_dtype(df[col]):
                 interp_row[col] = float(np.interp(clamped_CL, df["CL"], df[col]))
 
-        drag_coefficient = interp_row.get("CD", float("nan"))
+        raw_avl_drag_coefficient = interp_row.get("CD", float("nan"))
+        drag_coefficient = raw_avl_drag_coefficient + self.aircraft.zero_lift_drag_coefficient
+        avl_oswald_efficiency = _polar_oswald_efficiency(interp_row, self.aircraft.aspect_ratio)
         alpha_deg = interp_row.get("alpha_deg", float("nan"))
         beta_deg = interp_row.get("beta_deg", float("nan"))
 
@@ -321,7 +356,16 @@ class AVLPolarMissionPerformanceModel:
                 name = col[len("control_") : -len("_deg")]
                 controls[name] = interp_row[col]
 
-        diagnostics = {"avl_call_count": 0}
+        diagnostics = {
+            "avl_call_count": 0,
+            "raw_avl_drag_coefficient": raw_avl_drag_coefficient,
+            "zero_lift_drag_coefficient": self.aircraft.zero_lift_drag_coefficient,
+            **(
+                {"avl_oswald_efficiency": avl_oswald_efficiency}
+                if avl_oswald_efficiency is not None
+                else {}
+            ),
+        }
         for col in df.columns:
             if col not in ("CL", "CD", "alpha_deg", "beta_deg", "feasible", "elevator_deg") and not col.startswith(
                 "control_"

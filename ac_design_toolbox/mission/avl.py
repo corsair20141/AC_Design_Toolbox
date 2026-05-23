@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from math import degrees, sin
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -71,6 +72,33 @@ def _avl_angle_of_attack(result: Mapping[str, Any]) -> float | None:
 def _avl_sideslip_angle(result: Mapping[str, Any]) -> float | None:
     """Return sideslip angle from common AVL result field names."""
     return _first_float(result, "beta_trim_deg", "beta_deg", "Beta", "beta")
+
+
+def _avl_oswald_efficiency(result: Mapping[str, Any], aspect_ratio: float) -> float | None:
+    """Estimate AVL span efficiency from reported induced-drag data."""
+    for key in ("oswald_efficiency", "span_efficiency", "e"):
+        try:
+            value = float(result[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value > 0.0:
+            return value
+
+    try:
+        k_value = float(result.get("K"))
+    except (TypeError, ValueError):
+        k_value = float("nan")
+    if math.isfinite(k_value) and k_value > 0.0 and aspect_ratio > 0.0:
+        return 1.0 / (math.pi * float(aspect_ratio) * k_value)
+
+    try:
+        cl_value = float(result.get("CL"))
+        cdi_value = float(result.get("CDi", result.get("CDind")))
+    except (TypeError, ValueError):
+        return None
+    if math.isfinite(cl_value) and math.isfinite(cdi_value) and cdi_value > 0.0 and aspect_ratio > 0.0:
+        return cl_value * cl_value / (math.pi * float(aspect_ratio) * cdi_value)
+    return None
 
 
 @dataclass
@@ -161,7 +189,8 @@ class AVLMissionPerformanceModel:
         air_density_kg_m3 = float(trim_result.get("rho", air_density_kg_m3))
         dynamic_pressure_pa = 0.5 * air_density_kg_m3 * op.airspeed**2
         lift_coefficient = float(trim_result["CL"])
-        drag_coefficient = float(trim_result["CD"])
+        raw_avl_drag_coefficient = float(trim_result["CD"])
+        drag_coefficient = raw_avl_drag_coefficient + self.aircraft.zero_lift_drag_coefficient
         drag_force_n = dynamic_pressure_pa * self.aircraft.wing_area * drag_coefficient
         useful_propulsive_force_n = drag_force_n + weight_newtons * sin(resolved_state.flight_path_angle_rad)
         propulsion_power_w = useful_propulsive_force_n * op.airspeed / self.aircraft.propulsive_efficiency
@@ -200,6 +229,7 @@ class AVLMissionPerformanceModel:
         control_surface_deflections = reported_controls
         alpha_deg = reported_alpha_deg
         beta_deg = _avl_sideslip_angle(trim_result)
+        avl_oswald_efficiency = _avl_oswald_efficiency(trim_result, self.aircraft.aspect_ratio)
 
         feasible = resolved_state.feasible
         if abs(lift_coefficient - lift_coefficient_target) > self.tol_CL or abs(float(trim_result["Cm"])) > self.tol_Cm:
@@ -233,7 +263,16 @@ class AVLMissionPerformanceModel:
             flap_deflection=control_surface_deflections.get("flap"),
             control_surface_deflections=control_surface_deflections,
             notes=" ".join(notes).strip(),
-            diagnostics={"avl_call_count": trim_result.get("avl_calls")},
+            diagnostics={
+                "avl_call_count": trim_result.get("avl_calls"),
+                "raw_avl_drag_coefficient": raw_avl_drag_coefficient,
+                "zero_lift_drag_coefficient": self.aircraft.zero_lift_drag_coefficient,
+                **(
+                    {"avl_oswald_efficiency": avl_oswald_efficiency}
+                    if avl_oswald_efficiency is not None
+                    else {}
+                ),
+            },
         )
 
     def _build_case_name(self, op: MissionOperatingPoint) -> str:

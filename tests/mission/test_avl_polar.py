@@ -30,6 +30,7 @@ class TestAVLPolarMissionPerformanceModel(unittest.TestCase):
             "elevator_deg": [2.0, 0.0, -2.0],
             "feasible": [1.0, 1.0, 1.0],
             "avl_Cma": [-1.0, -1.0, -1.0],
+            "avl_CDind": [0.001, 0.01, 0.03],
             "control_elevator_deg": [2.0, 0.0, -2.0],
         })
         table = AVLAeroPolarTable(config=config, data=df)
@@ -78,11 +79,60 @@ class TestAVLPolarMissionPerformanceModel(unittest.TestCase):
         
         self.assertTrue(pt.feasible)
         self.assertAlmostEqual(pt.lift_coefficient, 0.5, places=2)
-        self.assertAlmostEqual(pt.drag_coefficient, 0.03, places=3)
+        self.assertAlmostEqual(pt.drag_coefficient, 0.05, places=3)
         self.assertAlmostEqual(pt.angle_of_attack, 5.0, places=2)
         self.assertAlmostEqual(pt.elevator_deflection, 0.0, places=3)
         self.assertEqual(pt.diagnostics["avl_call_count"], 0)
         self.assertEqual(pt.diagnostics["performance_polar_avl_Cma"], -1.0)
+        self.assertAlmostEqual(pt.diagnostics["zero_lift_drag_coefficient"], 0.02)
+        self.assertAlmostEqual(pt.diagnostics["raw_avl_drag_coefficient"], 0.03, delta=1e-6)
+        self.assertAlmostEqual(
+            pt.diagnostics["avl_oswald_efficiency"],
+            0.5**2 / (math.pi * 10.0 * 0.01),
+            delta=1e-5,
+        )
+
+    def test_supplied_polar_table_avoids_generation(self):
+        config = AVLAeroPolarConfig()
+        table = AVLAeroPolarTable.from_records(
+            config,
+            [
+                {"CL": 0.5, "CD": 0.01, "alpha_deg": 3.0, "beta_deg": 0.0, "feasible": 1.0},
+            ],
+        )
+        aircraft = MissionAircraftPerformanceConfig(
+            mass=10.0,
+            wing_area=1.0,
+            aspect_ratio=10.0,
+            oswald_efficiency=0.8,
+            zero_lift_drag_coefficient=0.02,
+            propulsive_efficiency=1.0,
+        )
+        model = AVLPolarMissionPerformanceModel(
+            airplane=None,
+            aircraft=aircraft,
+            config=config,
+            polar_table=table,
+        )
+
+        self.assertIs(model.get_polar_table(), table)
+
+    def test_polar_table_from_dataframe_copies_columns(self):
+        config = AVLAeroPolarConfig()
+        source = pd.DataFrame(
+            {
+                "CL": [0.2],
+                "CD": [0.01],
+                "stab_Cma": [-0.8],
+                "control_elevator_deg": [1.5],
+            }
+        )
+
+        table = AVLAeroPolarTable.from_dataframe(config, source)
+        source.loc[0, "CD"] = 99.0
+
+        self.assertAlmostEqual(table.to_dataframe().loc[0, "CD"], 0.01)
+        self.assertIn("stab_Cma", table.to_dataframe().columns)
         
     def test_out_of_range_clamping(self):
         config = AVLAeroPolarConfig()
@@ -112,7 +162,7 @@ class TestAVLPolarMissionPerformanceModel(unittest.TestCase):
         
         self.assertFalse(pt.feasible)
         self.assertAlmostEqual(pt.lift_coefficient, 0.5) # clamped to max
-        self.assertAlmostEqual(pt.drag_coefficient, 0.03)
+        self.assertAlmostEqual(pt.drag_coefficient, 0.05)
         self.assertIn("clamping", pt.notes.lower())
 
 if __name__ == "__main__":
