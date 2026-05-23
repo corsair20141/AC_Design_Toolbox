@@ -1,0 +1,24 @@
+LOAD Airplane.avl
+OPER
+A
+A 2
+B
+B 0
+M
+V 15
+D 1.225
+
+R R 0
+P P 0
+Y Y 0
+X
+FT
+polar_a2p0.forces
+ST
+polar_a2p0.stability
+FS
+polar_a2p0.strip
+HM
+polar_a2p0.hinge
+
+QUIT

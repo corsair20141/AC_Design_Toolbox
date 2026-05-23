@@ -1,0 +1,11 @@
+Test
+#Mach
+0        ! AeroSandbox note: This is overwritten later to match the current OperatingPoint Mach during the AVL run.
+#IYsym   IZsym   Zsym
+0       0   0
+#Sref    Cref    Bref
+1.0 1.0 1.0
+#Xref    Yref    Zref
+0.0 0.0 0.0
+# CDp
+0

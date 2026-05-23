@@ -18,8 +18,18 @@ __all__ = [
 
 try:
     from ac_design_toolbox.mission.avl import AVLMissionPerformanceModel
+    from ac_design_toolbox.mission.avl_polar import (
+        AVLAeroPolarConfig,
+        AVLAeroPolarTable,
+        AVLPolarMissionPerformanceModel,
+    )
 
-    __all__.append("AVLMissionPerformanceModel")
+    __all__.extend([
+        "AVLMissionPerformanceModel",
+        "AVLAeroPolarConfig",
+        "AVLAeroPolarTable",
+        "AVLPolarMissionPerformanceModel",
+    ])
 except ModuleNotFoundError:
     # The AVL-backed mission path depends on AeroSandbox and the AVL stack.
     pass
