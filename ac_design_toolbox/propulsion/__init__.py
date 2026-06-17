@@ -12,6 +12,7 @@ from ac_design_toolbox.propulsion.catalogs import (
 from ac_design_toolbox.propulsion.data import (
     PropellerTableSet,
     infer_diameter_from_name,
+    infer_propeller_size_from_name,
     load_apc_performance_file,
     load_apc_table_for_rpm,
     load_uiuc_performance_file,
@@ -53,6 +54,7 @@ __all__ = [
     "TabulatedPropeller",
     "convert_value",
     "infer_diameter_from_name",
+    "infer_propeller_size_from_name",
     "load_apc_performance_file",
     "load_apc_table_for_rpm",
     "load_battery_catalog",

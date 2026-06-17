@@ -14,6 +14,7 @@ from ac_design_toolbox import (
     PropulsionOperatingPoint,
     TabulatedPropeller,
     infer_diameter_from_name,
+    infer_propeller_size_from_name,
     parse_apc_performance_text,
     parse_uiuc_performance_text,
     solve_motor_prop_operating_point,
@@ -182,6 +183,10 @@ class PropulsionModelTests(unittest.TestCase):
 
         self.assertAlmostEqual(infer_diameter_from_name("apcsf_9x4.7_kt1033_4008.txt") or 0.0, 9.0 * 0.0254)
         self.assertAlmostEqual(infer_diameter_from_name("PER3_105x45.dat") or 0.0, 10.5 * 0.0254)
+        self.assertEqual(infer_propeller_size_from_name("PER3_105x45.dat"), (10.5, 4.5))
+        self.assertEqual(infer_propeller_size_from_name("PER3_10x5E.dat"), (10.0, 5.0))
+        self.assertEqual(infer_propeller_size_from_name("apce_11x7_4008.txt"), (11.0, 7.0))
+        self.assertEqual(infer_propeller_size_from_name("apcsf_9x4.7_kt1033_4008.txt"), (9.0, 4.7))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             uiuc_path = Path(tmpdir) / "apcsf_9x4.7_kt1033_4008.txt"

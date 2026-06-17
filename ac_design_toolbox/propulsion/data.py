@@ -107,12 +107,16 @@ def _infer_inches_pair_from_name(name: str) -> tuple[float, float] | None:
     # APC filenames often encode decimals without dots, e.g. 105x45 -> 10.5x4.5.
     match = re.search(r"per3_(\d+)x(\d+)", stem)
     if match:
+        raw_diameter = match.group(1)
+        raw_pitch = match.group(2)
+        compact_decimal = len(raw_diameter) >= 3 or len(raw_pitch) >= 3
+
         def decode_apc_dimension(raw_value: str) -> float:
-            if len(raw_value) >= 3:
+            if compact_decimal and len(raw_value) >= 2:
                 return float(raw_value[:-1] + "." + raw_value[-1])
             return float(raw_value)
 
-        return decode_apc_dimension(match.group(1)), decode_apc_dimension(match.group(2))
+        return decode_apc_dimension(raw_diameter), decode_apc_dimension(raw_pitch)
 
     match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(?!\d)", stem)
     if match:
@@ -120,9 +124,19 @@ def _infer_inches_pair_from_name(name: str) -> tuple[float, float] | None:
     return None
 
 
+def infer_propeller_size_from_name(name: str) -> tuple[float, float] | None:
+    """Return ``(diameter_in, pitch_in)`` inferred from an APC/UIUC prop name.
+
+    Public callers use inches because APC and UIUC identify propellers by inch
+    diameter/pitch strings. Solver-facing loaders still convert diameter to SI.
+    """
+
+    return _infer_inches_pair_from_name(name)
+
+
 def infer_diameter_from_name(name: str) -> float | None:
     """Return inferred propeller diameter in meters from a filename."""
-    inferred = _infer_inches_pair_from_name(name)
+    inferred = infer_propeller_size_from_name(name)
     if inferred is None:
         return None
     diameter_in, _pitch_in = inferred
@@ -381,6 +395,7 @@ __all__ = [
     "INCH_TO_M",
     "PropellerTableSet",
     "infer_diameter_from_name",
+    "infer_propeller_size_from_name",
     "load_apc_performance_file",
     "load_apc_table_for_rpm",
     "load_uiuc_performance_file",
