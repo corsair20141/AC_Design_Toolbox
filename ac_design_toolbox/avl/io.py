@@ -48,19 +48,63 @@ def ensure_case_dir(working_directory: Path, case_name: str) -> Path:
 
 
 def parse_refs_from_avl(avl_path: Path) -> Tuple[float, float, float]:
-    """Parse ``Sref``, ``Cref``, and ``Bref`` from an AVL geometry header."""
-    with avl_path.open("r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()
+    """
+    Read Sref, Cref, Bref from a standard AVL geometry file.
 
-    for index in range(min(80, len(lines))):
-        match = _AVL_HEADER_REFS.match(lines[index].strip())
-        if match:
-            Sref = float(match.group("Sref"))
-            Cref = float(match.group("Cref"))
-            Bref = float(match.group("Bref"))
-            if Sref > 0 and Cref > 0 and Bref > 0:
-                return Sref, Cref, Bref
-    raise ValueError(f"Could not parse Sref/Cref/Bref from {avl_path}")
+    Expected AVL header:
+        0: Aircraft title
+        1: Mach
+        2: iYsym, iZsym, Zsym
+        3: Sref, Cref, Bref
+        4: Xref, Yref, Zref
+
+    Ignores blank lines and trailing comments (!, #, |).
+    """
+
+    avl_path = Path(avl_path)
+
+    # Read first 5 meaningful header lines
+    header = []
+
+    for line_number, line in enumerate(
+        avl_path.read_text(encoding="utf-8-sig").splitlines(), start=1
+    ):
+        clean = re.split(r"[!#|]", line, maxsplit=1)[0].strip()
+
+        if clean:
+            header.append((line_number, clean))
+
+        if len(header) == 5:
+            break
+
+    if len(header) < 5:
+        raise ValueError(f"Incomplete AVL header: {avl_path}")
+
+    # Fourth meaningful line contains Sref, Cref, Bref
+    line_number, ref_line = header[3]
+    values = ref_line.split()
+
+    if len(values) != 3:
+        raise ValueError(
+            f"Invalid Sref/Cref/Bref line {line_number} "
+            f"in {avl_path}: {ref_line}"
+        )
+
+    try:
+        Sref, Cref, Bref = map(float, values)
+    except ValueError as exc:
+        raise ValueError(
+            f"Non-numeric reference dimensions on line {line_number}: "
+            f"{ref_line}"
+        ) from exc
+
+    if not all(0 < v < float("inf") for v in (Sref, Cref, Bref)):
+        raise ValueError(
+            f"Invalid reference dimensions: "
+            f"Sref={Sref}, Cref={Cref}, Bref={Bref}"
+        )
+
+    return Sref, Cref, Bref
 
 
 def isa_density(altitude_m: float, temp_shift_F: float = 0.0) -> float:

@@ -4,6 +4,7 @@ Version: 0.1.0
 Summary: Research-oriented aircraft analysis and configuration toolbox
 Requires-Python: >=3.11
 Requires-Dist: aerosandbox
+Requires-Dist: dash>=2.14
 Requires-Dist: matplotlib>=3.8
 Requires-Dist: numpy>=1.24
 Requires-Dist: plotly>=6.0.0
